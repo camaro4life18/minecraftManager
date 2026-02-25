@@ -557,16 +557,25 @@ export class MinecraftServerManager {
    */
   async listPlugins() {
     try {
-      // Use find with -exec basename instead of -printf for better compatibility
-      const result = await this.runAsMinecraft(
-        `find ${this.minecraftPath}/plugins -maxdepth 1 -name "*.jar" -type f -exec basename {} \\; 2>/dev/null | sort`
-      );
+      const command = `find ${this.minecraftPath}/plugins -maxdepth 1 -name "*.jar" -type f -exec basename {} \\; 2>/dev/null | sort`;
+      console.log(`🔍 Listing plugins from: ${this.minecraftPath}/plugins`);
+      console.log(`📋 Running command: ${command}`);
+      
+      const result = await this.runAsMinecraft(command);
+      
+      console.log(`📊 Command stdout length: ${result.stdout.length}`);
+      console.log(`📊 Command exit code: ${result.code}`);
+      
       if (!result.stdout.trim()) {
+        console.log('⚠️  No plugins found (empty result)');
         return [];
       }
-      return result.stdout.trim().split('\n').filter(p => p.trim());
+      
+      const plugins = result.stdout.trim().split('\n').filter(p => p.trim());
+      console.log(`✓ Found ${plugins.length} plugins: ${plugins.join(', ')}`);
+      return plugins;
     } catch (error) {
-      console.error('Error listing plugins:', error);
+      console.error('❌ Error listing plugins:', error);
       return [];
     }
   }
