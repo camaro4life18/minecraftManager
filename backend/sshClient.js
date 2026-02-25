@@ -308,15 +308,46 @@ class SSHClient {
             const privateKey = privateKeyPart[0].trim();
             const publicKey = privateKeyPart[1].trim();
 
-            // Return the keys immediately - don't wait for authorized_keys setup
-            // The keys are safely generated on the server filesystem
-            console.log(`[SSH] Keys generated successfully, closing connection and resolving`);
-            clearTimeout(timeout);
-            conn.end();
-            if (!isResolved) {
-              isResolved = true;
-              resolve({ privateKey, publicKey });
-            }
+            // Add public key to authorized_keys using cat (safe - no shell escaping issues)
+            const addKeyCommand = `cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`;
+            
+            console.log(`[SSH] Adding key to authorized_keys`);
+            conn.exec(addKeyCommand, (err, stream) => {
+              if (err) {
+                console.log(`[SSH] Warning: Could not execute authorized_keys command:`, err.message);
+                // Still resolve even if authorized_keys fails - keys are generated
+                clearTimeout(timeout);
+                conn.end();
+                if (!isResolved) {
+                  isResolved = true;
+                  resolve({ privateKey, publicKey });
+                }
+                return;
+              }
+
+              let addStdout = '';
+              let addStderr = '';
+
+              stream.on('close', (code, signal) => {
+                console.log(`[SSH] authorized_keys command completed with code: ${code}`);
+                clearTimeout(timeout);
+                conn.end();
+                if (!isResolved) {
+                  isResolved = true;
+                  if (code === 0) {
+                    console.log(`[SSH] Successfully added key to authorized_keys`);
+                  } else {
+                    console.log(`[SSH] Warning: authorized_keys command failed:`, addStderr);
+                  }
+                  // Always resolve - keys are generated even if authorized_keys update fails
+                  resolve({ privateKey, publicKey });
+                }
+              }).on('data', (data) => {
+                addStdout += data.toString();
+              }).stderr.on('data', (data) => {
+                addStderr += data.toString();
+              });
+            });
           }).on('data', (data) => {
             stdout += data.toString();
             console.log(`[SSH] Received stdout data: ${data.toString().substring(0, 100)}...`);
