@@ -232,7 +232,7 @@ if [ "$NEEDS_NODEJS" = true ] || [ "$NEEDS_DOCKER" = true ] || [ "$NEEDS_POSTGRE
             
             DOCKER_VERSION=$(docker --version)
             print_success "Docker installed: $DOCKER_VERSION"
-            print_warning "You may need to log out and back in for docker group permissions"
+            print_info "Docker group permissions configured for current user"
             echo ""
             
             # Set compose command
@@ -293,6 +293,7 @@ if [ "$NEEDS_NODEJS" = true ] || [ "$NEEDS_DOCKER" = true ] || [ "$NEEDS_POSTGRE
             
             DOCKER_VERSION=$(docker --version)
             print_success "Docker installed: $DOCKER_VERSION"
+            print_info "Docker group permissions configured for current user"
             echo ""
         fi
         
@@ -514,6 +515,23 @@ fi
 echo ""
 print_step "Phase 6: Building Docker images"
 echo ""
+
+# Check if user has docker permissions
+if ! docker ps &> /dev/null; then
+    print_error "Docker permission denied - activating docker group..."
+    echo ""
+    echo "Your user was added to the docker group, but the group membership"
+    echo "is not yet active in this shell session."
+    echo ""
+    echo "Run this command to activate it and continue:"
+    echo ""
+    echo "  newgrp docker"
+    echo ""
+    echo "Then re-run this script starting from this point:"
+    echo "  bash setup.sh"
+    echo ""
+    exit 1
+fi
 
 echo "🔨 Building Docker images (this may take a few minutes)..."
 $COMPOSE_CMD build
