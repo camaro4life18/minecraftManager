@@ -778,9 +778,10 @@ export class MinecraftServerManager {
       if (projectResponse.ok) {
         const data = await projectResponse.json();
         projectNamespace = data.namespace.owner + '/' + data.namespace.slug;
+        console.log(`✓ Found project directly: ${projectNamespace}`);
       } else {
         // If not found, search for the project
-        console.log(`🔍 Slug "${slug}" not found, searching Hangar...`);
+        console.log(`⚠️  Direct lookup failed (${projectResponse.status}), searching Hangar...`);
         const searchResponse = await fetch(`https://hangar.papermc.io/api/v1/projects?q=${encodeURIComponent(slug)}&limit=10`);
         
         if (!searchResponse.ok) {
@@ -794,6 +795,8 @@ export class MinecraftServerManager {
           throw new Error(`No Hangar projects found matching "${slug}"`);
         }
         
+        console.log(`✓ Found ${results.length} search results for "${slug}"`);
+        
         // Try exact match first, then fuzzy match
         let project = results.find(p => p.namespace.slug.toLowerCase() === slug.toLowerCase());
         
@@ -805,6 +808,7 @@ export class MinecraftServerManager {
         if (!project) {
           // Use the first result as fallback
           project = results[0];
+          console.log(`⚠️  No exact match, using first result: ${project.name}`);
         }
         
         projectNamespace = project.namespace.owner + '/' + project.namespace.slug;
@@ -816,7 +820,7 @@ export class MinecraftServerManager {
       const versionsResponse = await fetch(`https://hangar.papermc.io/api/v1/projects/${projectNamespace}/versions?limit=1`);
       
       if (!versionsResponse.ok) {
-        throw new Error(`Failed to fetch versions for ${projectNamespace}`);
+        throw new Error(`Failed to fetch versions for ${projectNamespace} (${versionsResponse.status})`);
       }
       
       const versionsData = await versionsResponse.json();
@@ -827,16 +831,22 @@ export class MinecraftServerManager {
       }
       
       const latestVersion = versions[0];
+      console.log(`✓ Latest version: ${latestVersion.name}`);
+      
       const paperDownload = latestVersion.downloads.PAPER;
       
-      if (!paperDownload || !paperDownload.downloadUrl) {
-        throw new Error(`No Paper download found for ${projectNamespace} version ${latestVersion.name}`);
+      if (!paperDownload) {
+        throw new Error(`No Paper platform available for ${projectNamespace} v${latestVersion.name}`);
       }
       
-      console.log(`✓ Found latest version: ${latestVersion.name}, download URL: ${paperDownload.downloadUrl}`);
+      if (!paperDownload.downloadUrl) {
+        throw new Error(`No download URL in Paper download info for ${projectNamespace} v${latestVersion.name}`);
+      }
+      
+      console.log(`✓ Download URL: ${paperDownload.downloadUrl}`);
       return paperDownload.downloadUrl;
     } catch (error) {
-      console.error(`❌ Error getting Hangar download URL: ${error.message}`);
+      console.error(`❌ Error getting Hangar download URL for "${slug}": ${error.message}`);
       throw error;
     }
   }
