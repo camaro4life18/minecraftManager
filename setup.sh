@@ -517,22 +517,25 @@ print_step "Phase 6: Building Docker images"
 echo ""
 
 # Check if user has docker permissions, and set up the command prefix
-DOCKER_PREFIX=""
+USE_SG=false
+USE_SUDO=false
 if ! docker ps &> /dev/null 2>&1; then
     # Docker group not active in current session, use sg (switch group)
     if groups | grep -q docker; then
         print_info "Activating docker group permissions for build commands..."
-        DOCKER_PREFIX="sg docker -c"
+        USE_SG=true
     else
         # Not in docker group at all, use sudo
         print_warning "Using sudo for Docker commands..."
-        DOCKER_PREFIX="sudo"
+        USE_SUDO=true
     fi
 fi
 
 echo "🔨 Building Docker images (this may take a few minutes)..."
-if [ -n "$DOCKER_PREFIX" ]; then
-    $DOCKER_PREFIX "$COMPOSE_CMD build"
+if [ "$USE_SG" = true ]; then
+    sg docker -c "$COMPOSE_CMD build"
+elif [ "$USE_SUDO" = true ]; then
+    sudo $COMPOSE_CMD build
 else
     $COMPOSE_CMD build
 fi
@@ -544,8 +547,10 @@ print_step "Phase 7: Deploying application"
 echo ""
 
 echo "🚀 Starting containers..."
-if [ -n "$DOCKER_PREFIX" ]; then
-    $DOCKER_PREFIX "$COMPOSE_CMD up -d"
+if [ "$USE_SG" = true ]; then
+    sg docker -c "$COMPOSE_CMD up -d"
+elif [ "$USE_SUDO" = true ]; then
+    sudo $COMPOSE_CMD up -d
 else
     $COMPOSE_CMD up -d
 fi
@@ -558,8 +563,10 @@ sleep 3
 # Check container status
 echo ""
 echo "📊 Container Status:"
-if [ -n "$DOCKER_PREFIX" ]; then
-    $DOCKER_PREFIX "$COMPOSE_CMD ps"
+if [ "$USE_SG" = true ]; then
+    sg docker -c "$COMPOSE_CMD ps"
+elif [ "$USE_SUDO" = true ]; then
+    sudo $COMPOSE_CMD ps
 else
     $COMPOSE_CMD ps
 fi
@@ -594,13 +601,20 @@ echo "  Password: admin123"
 echo "  ⚠️  Change this in production!"
 echo ""
 echo "⚙️  Useful Commands:"
-if [ -n "$DOCKER_PREFIX" ]; then
-    echo "  View logs:    $DOCKER_PREFIX '$COMPOSE_CMD logs -f'"
-    echo "  Stop app:     $DOCKER_PREFIX '$COMPOSE_CMD down'"
-    echo "  Restart app:  $DOCKER_PREFIX '$COMPOSE_CMD restart'"
-    echo "  View status:  $DOCKER_PREFIX '$COMPOSE_CMD ps'"
+if [ "$USE_SG" = true ]; then
+    echo "  View logs:    sg docker -c '$COMPOSE_CMD logs -f'"
+    echo "  Stop app:     sg docker -c '$COMPOSE_CMD down'"
+    echo "  Restart app:  sg docker -c '$COMPOSE_CMD restart'"
+    echo "  View status:  sg docker -c '$COMPOSE_CMD ps'"
     echo ""
-    echo "  💡 Note: Log out and back in to use docker without '$DOCKER_PREFIX'"
+    echo "  💡 Note: Log out and back in to use docker without 'sg docker -c'"
+elif [ "$USE_SUDO" = true ]; then
+    echo "  View logs:    sudo $COMPOSE_CMD logs -f"
+    echo "  Stop app:     sudo $COMPOSE_CMD down"
+    echo "  Restart app:  sudo $COMPOSE_CMD restart"
+    echo "  View status:  sudo $COMPOSE_CMD ps"
+    echo ""
+    echo "  💡 Note: Add user to docker group to use docker without sudo"
 else
     echo "  View logs:    $COMPOSE_CMD logs -f"
     echo "  Stop app:     $COMPOSE_CMD down"
