@@ -557,8 +557,9 @@ export class MinecraftServerManager {
    */
   async listPlugins() {
     try {
+      // Use find with -exec basename instead of -printf for better compatibility
       const result = await this.runAsMinecraft(
-        `find ${this.minecraftPath}/plugins -maxdepth 1 -name "*.jar" -type f -printf '%f\\n' 2>/dev/null | sort`
+        `find ${this.minecraftPath}/plugins -maxdepth 1 -name "*.jar" -type f -exec basename {} \\; 2>/dev/null | sort`
       );
       if (!result.stdout.trim()) {
         return [];
