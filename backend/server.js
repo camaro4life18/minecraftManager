@@ -1761,9 +1761,27 @@ async function startServer() {
         }
 
         const data = await response.json();
-        const versions = data.versions.slice(-20).reverse(); // Get last 20 versions, reversed (newest first)
+        const versionNumbers = data.versions.slice(-20).reverse(); // Get last 20 versions, reversed (newest first)
 
-        res.json({ versions });
+        // Fetch build numbers for each version
+        const versionsWithBuilds = await Promise.all(
+          versionNumbers.map(async (version) => {
+            try {
+              const versionRes = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}`);
+              if (!versionRes.ok) return { version, build: null };
+              
+              const versionData = await versionRes.json();
+              const latestBuild = versionData.builds[versionData.builds.length - 1];
+              
+              return { version, build: latestBuild };
+            } catch (error) {
+              console.error(`Error fetching build for ${version}:`, error);
+              return { version, build: null };
+            }
+          })
+        );
+
+        res.json({ versions: versionsWithBuilds });
       } catch (error) {
         console.error('❌ Error fetching PaperMC versions:', error);
         res.status(500).json({ error: error.message });

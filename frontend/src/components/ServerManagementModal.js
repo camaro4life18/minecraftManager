@@ -933,9 +933,9 @@ function ServerManagementModal({ server, onClose }) {
                     disabled={updating}
                   >
                     <option value="">-- Select a version --</option>
-                    {availableVersions.map((version) => (
-                      <option key={version} value={version}>
-                        {version}
+                    {availableVersions.map((versionInfo) => (
+                      <option key={versionInfo.version} value={versionInfo.version}>
+                        {versionInfo.build ? `${versionInfo.version} (Build ${versionInfo.build})` : versionInfo.version}
                       </option>
                     ))}
                   </select>
