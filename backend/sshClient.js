@@ -225,6 +225,16 @@ class SSHClient {
   static async generateSSHKeys(host, port, username, password) {
     return new Promise((resolve, reject) => {
       const conn = new Client();
+      let isResolved = false;
+      
+      // Set timeout for the entire operation (30 seconds)
+      const timeout = setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          conn.end();
+          reject(new Error('SSH connection timeout. Please check the host, credentials, and network connectivity.'));
+        }
+      }, 30000);
       
       conn.on('ready', () => {
         // Generate SSH keys with PEM format
@@ -232,31 +242,50 @@ class SSHClient {
         
         conn.exec(command, (err, stream) => {
           if (err) {
+            clearTimeout(timeout);
             conn.end();
-            return reject(err);
+            if (!isResolved) {
+              isResolved = true;
+              return reject(err);
+            }
+            return;
           }
 
           let stdout = '';
           let stderr = '';
 
           stream.on('close', (code, signal) => {
-            conn.end();
             
             if (code !== 0) {
-              reject(new Error(`Key generation failed: ${stderr}`));
+              clearTimeout(timeout);
+              conn.end();
+              if (!isResolved) {
+                isResolved = true;
+                reject(new Error(`Key generation failed: ${stderr}`));
+              }
               return;
             }
 
             // Parse the output to extract keys
             const parts = stdout.split('---PRIVATE_KEY---');
             if (parts.length < 2) {
-              reject(new Error('Failed to parse private key from server response'));
+              clearTimeout(timeout);
+              conn.end();
+              if (!isResolved) {
+                isResolved = true;
+                reject(new Error('Failed to parse private key from server response'));
+              }
               return;
             }
 
             const privateKeyPart = parts[1].split('---PUBLIC_KEY---');
             if (privateKeyPart.length < 2) {
-              reject(new Error('Failed to parse public key from server response'));
+              clearTimeout(timeout);
+              conn.end();
+              if (!isResolved) {
+                isResolved = true;
+                reject(new Error('Failed to parse public key from server response'));
+              }
               return;
             }
 
@@ -272,8 +301,12 @@ class SSHClient {
               }
 
               stream.on('close', (code, signal) => {
+                clearTimeout(timeout);
                 conn.end();
-                resolve({ privateKey, publicKey });
+                if (!isResolved) {
+                  isResolved = true;
+                  resolve({ privateKey, publicKey });
+                }
               });
             });
           }).on('data', (data) => {
@@ -283,12 +316,17 @@ class SSHClient {
           });
         });
       }).on('error', (err) => {
-        reject(err);
+        clearTimeout(timeout);
+        if (!isResolved) {
+          isResolved = true;
+          reject(err);
+        }
       }).connect({
         host,
         port: port || 22,
         username,
-        password
+        password,
+        readyTimeout: 20000  // 20 second connection timeout
       });
     });
   }

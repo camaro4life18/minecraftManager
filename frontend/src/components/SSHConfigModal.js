@@ -32,6 +32,11 @@ function SSHConfigModal({ server, onClose, onSuccess }) {
 
     try {
       const token = localStorage.getItem('authToken');
+      
+      // Create an AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 35000); // 35 second timeout
+      
       const response = await fetch(
         `${process.env.REACT_APP_API_URL}/api/servers/${server.vmid}/ssh-generate-keys`,
         {
@@ -40,9 +45,12 @@ function SSHConfigModal({ server, onClose, onSuccess }) {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify(generateForm)
+          body: JSON.stringify(generateForm),
+          signal: controller.signal
         }
       );
+      
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const data = await response.json();
@@ -69,7 +77,11 @@ function SSHConfigModal({ server, onClose, onSuccess }) {
       // Switch to manual mode to show the key
       setTimeout(() => setMode('manual'), 2000);
     } catch (err) {
-      setError(err.message);
+      if (err.name === 'AbortError') {
+        setError('Request timeout. Please check the server host, credentials, and network connectivity.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setGeneratingKeys(false);
     }
