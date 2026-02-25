@@ -20,42 +20,99 @@ A full-stack web application for managing Minecraft servers running on Proxmox. 
 └─────────────┘         └──────────────┘         └──────────────┘
 ```
 
+## 🚀 Quick Start
+
+### ⚡ Fastest Way - Automated Setup (Recommended)
+
+Just run one script and everything is set up automatically!
+
+**Windows:**
+```powershell
+# Run as Administrator
+.\setup.bat
+```
+
+**macOS/Linux:**
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+The script will:
+- ✅ Check for all dependencies (Node.js, Docker, PostgreSQL)
+- ✅ Guide you through installing anything missing
+- ✅ Install all project dependencies
+- ✅ Create configuration files
+- ✅ Build Docker images
+- ✅ Get you ready to start!
+
+📖 **See [INSTALL_GUIDE.md](INSTALL_GUIDE.md) for detailed instructions**
+
+---
+
+### 🐳 Start the Application
+
+After setup, choose your preferred method:
+
+**Option 1: Docker Compose (Recommended)**
+```bash
+# Simple start
+docker-compose up
+
+# Or using the provided script
+./docker-start.sh        # macOS/Linux
+docker-start.bat         # Windows
+```
+
+**Option 2: Local Development**
+```bash
+# macOS/Linux
+chmod +x start-app.sh
+./start-app.sh
+
+# Windows
+start-app.bat
+```
+
+**Option 3: Manual**
+```bash
+# Terminal 1: Backend
+cd backend
+npm run dev:backend
+
+# Terminal 2: Frontend
+cd frontend
+npm run dev:frontend
+```
+
+### 📱 Access the App
+
+```
+Frontend: http://localhost:3000
+Backend:  http://localhost:5000
+```
+
+**Default Admin Login:**
+- Username: `admin`
+- Password: `admin123`
+
+⚠️ **Change these credentials in production!**
+
+---
+
 ## Prerequisites
 
-- Docker & Docker Compose
-- Proxmox server with API access
-- Valid Proxmox credentials (username, password, realm)
-- Network access from Docker host to Proxmox host
+The setup script automatically checks for and helps install:
 
-## Quick Start
+| Component | Required | How to Install |
+|-----------|----------|-----------------|
+| **Node.js** | ✅ Yes | https://nodejs.org/ |
+| **Docker** | ✅ Yes | https://www.docker.com/products/docker-desktop |
+| **Docker Compose** | ✅ Yes | Included with Docker Desktop |
+| **PostgreSQL** | ⚠️ Optional | Included in Docker setup |
+| **Git** | ⚠️ Optional | https://git-scm.com/ |
 
-### 1. Clone and Configure
-
-```bash
-cd minecraft-web
-cp .env.example .env
-```
-
-### 2. Set Proxmox Credentials
-
-Edit `.env` and fill in your Proxmox details:
-
-```env
-PROXMOX_HOST=your-proxmox-ip-or-hostname.local
-PROXMOX_USERNAME=your-user@pam
-PROXMOX_PASSWORD=your-secure-password
-PROXMOX_REALM=pam
-```
-
-### 3. Start with Docker Compose
-
-```bash
-docker-compose up -d
-```
-
-The app will be available at:
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:5000/api
+The setup script will guide you through installation if anything is missing.
 
 ## Configuration
 
