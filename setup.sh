@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Minecraft Server Manager - Complete Setup Script for Unix/Linux/macOS
-# Installs: Node.js, Docker, PostgreSQL, and all dependencies
+# Automatically installs: Node.js, Docker, PostgreSQL, and all dependencies
 # Run with: bash setup.sh
 
 set -e
@@ -17,7 +17,7 @@ NC='\033[0m' # No Color
 print_header() {
     echo ""
     echo -e "${BLUE}============================================================${NC}"
-    echo "    🎮 Minecraft Server Manager - Unix Setup"
+    echo "    🎮 Minecraft Server Manager - Automated Setup"
     echo -e "${BLUE}============================================================${NC}"
     echo ""
 }
@@ -43,32 +43,97 @@ print_warning() {
 # Main setup
 print_header
 
-echo "This script will install all required dependencies:"
+echo "This script will automatically install all required dependencies:"
 echo "  - Node.js and npm"
 echo "  - Docker and Docker Compose"
 echo "  - PostgreSQL"
 echo "  - Project dependencies"
 echo ""
+echo "⚠️  This script requires sudo privileges to install system packages."
+echo ""
+
+# Step 0: Check for essential tools
+print_step "0" "Checking essential tools"
+
+# Check for curl
+if ! command -v curl &> /dev/null; then
+    print_warning "curl not found. Installing..."
+    if [[ -f /etc/debian_version ]]; then
+        sudo apt-get update && sudo apt-get install -y curl
+    elif [[ -f /etc/redhat-release ]]; then
+        sudo dnf install -y curl
+    fi
+    print_success "curl installed"
+else
+    print_success "curl found"
+fi
+
+# Check for sudo
+if ! command -v sudo &> /dev/null; then
+    print_error "sudo is required but not found"
+    echo "Please install sudo or run this script as root"
+    exit 1
+fi
 
 # Step 1: Check/Install Node.js
 print_step "1" "Checking for Node.js"
 
 if ! command -v node &> /dev/null; then
-    print_error "Node.js not found"
+    print_warning "Node.js not found. Installing Node.js..."
     echo ""
-    echo "Install Node.js using your package manager:"
-    echo ""
-    echo "On Ubuntu/Debian:"
-    echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
-    echo "  sudo apt-get install -y nodejs"
-    echo ""
-    echo "On macOS (with Homebrew):"
-    echo "  brew install node"
-    echo ""
-    echo "On Fedora/RHEL:"
-    echo "  sudo dnf install nodejs"
-    echo ""
-    exit 1
+    
+    # Detect OS and install Node.js
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        print_warning "On macOS, installing Node.js via Homebrew..."
+        if command -v brew &> /dev/null; then
+            brew install node
+            print_success "Node.js installed via Homebrew"
+        else
+            print_error "Homebrew not found. Installing Homebrew first..."
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            brew install node
+            print_success "Node.js installed"
+        fi
+        
+    elif [[ -f /etc/debian_version ]]; then
+        # Debian/Ubuntu
+        echo "📦 Installing Node.js on Debian/Ubuntu..."
+        
+        # Install Node.js 20.x LTS from NodeSource
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+        sudo apt-get install -y nodejs
+        
+        print_success "Node.js installed successfully"
+        
+    elif [[ -f /etc/redhat-release ]]; then
+        # RHEL/Fedora/CentOS
+        echo "📦 Installing Node.js on RHEL/Fedora..."
+        
+        # Install Node.js from NodeSource
+        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+        sudo dnf install -y nodejs
+        
+        print_success "Node.js installed successfully"
+    else
+        # Unknown OS - try using package manager or provide instructions
+        print_error "Unknown OS. Please install Node.js manually:"
+        echo ""
+        echo "Visit: https://nodejs.org/"
+        echo "Or use your package manager:"
+        echo "  - Ubuntu/Debian: curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs"
+        echo "  - Fedora: curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash - && sudo dnf install -y nodejs"
+        exit 1
+    fi
+    
+    # Verify installation
+    if command -v node &> /dev/null; then
+        NODE_VERSION=$(node --version)
+        print_success "Node.js installed: $NODE_VERSION"
+    else
+        print_error "Node.js installation failed. Please install manually."
+        exit 1
+    fi
 else
     NODE_VERSION=$(node --version)
     print_success "Node.js found: $NODE_VERSION"
@@ -78,20 +143,62 @@ fi
 print_step "2" "Checking for npm"
 
 if ! command -v npm &> /dev/null; then
-    print_error "npm not found. Please reinstall Node.js."
-    exit 1
-else
-    NPM_VERSION=$(npm --version)
-    print_success "npm found: $NPM_VERSION"
+    print_warning "npm not found (should come with Node.js)"
+    
+    # Try reinstalling Node.js which includes npm
+    if [[ -f /etc/debian_version ]]; then
+        echo "📦 Reinstalling Node.js with npm..."
+        sudo apt-get install -y nodejs npm
+    elif [[ -f /etc/redhat-release ]]; then
+        sudo dnf install -y nodejs npm
+    fi
+    
+    # Verify npm is now available
+    if ! command -v npm &> /dev/null; then
+        print_error "npm installation failed. Please install manually."
+        exit 1
+    fi
 fi
 
-# Step 3: Check Git
+NPM_VERSION=$(npm --version)
+print_success "npm found: $NPM_VERSION"
+
+# Step 3: Check/Install Git
 print_step "3" "Checking for Git"
 
 if ! command -v git &> /dev/null; then
-    print_warning "Git not found. This is recommended for version control."
-    echo "Install with: sudo apt-get install git  (Debian/Ubuntu)"
-    echo "             brew install git           (macOS)"
+    print_warning "Git not found. Installing Git..."
+    
+    # Detect OS and install Git
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        if command -v brew &> /dev/null; then
+            brew install git
+            print_success "Git installed via Homebrew"
+        else
+            print_warning "Install Xcode Command Line Tools for Git"
+            xcode-select --install
+        fi
+    elif [[ -f /etc/debian_version ]]; then
+        # Debian/Ubuntu
+        sudo apt-get update
+        sudo apt-get install -y git
+        print_success "Git installed successfully"
+    elif [[ -f /etc/redhat-release ]]; then
+        # RHEL/Fedora
+        sudo dnf install -y git
+        print_success "Git installed successfully"
+    else
+        print_warning "Could not auto-install Git. Recommended but not required."
+    fi
+    
+    # Verify installation
+    if command -v git &> /dev/null; then
+        GIT_VERSION=$(git --version)
+        print_success "Git installed: $GIT_VERSION"
+    else
+        print_warning "Git not installed - recommended for version control but not required"
+    fi
 else
     GIT_VERSION=$(git --version)
     print_success "Git found: $GIT_VERSION"

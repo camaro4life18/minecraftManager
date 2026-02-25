@@ -64,8 +64,10 @@ chmod +x setup.sh
 ```
 
 ✅ **On Ubuntu/Debian:** The script automatically:
+- Installs Node.js (if needed)
 - Installs Docker (if needed)
 - Installs PostgreSQL (if needed)
+- Installs Git (if needed)
 - Configures the database with secure credentials
 - Deploys the app!
 

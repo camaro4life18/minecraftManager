@@ -62,16 +62,18 @@ All documentation has been reviewed and updated to reference the automated setup
 ### What Setup Scripts Do
 
 **setup.sh (Linux/macOS):**
-1. ✅ Check for Node.js installation
-2. ✅ **Auto-install Docker** if missing (Ubuntu/Debian/RHEL)
-3. ✅ **Auto-install Docker Compose** if missing
-4. ✅ **Auto-install PostgreSQL** if missing
-5. ✅ **Configure PostgreSQL** (create database, user, generate password)
-6. ✅ Install npm dependencies (backend & frontend)
-7. ✅ Create configuration files (.env with database credentials)
-8. ✅ Build Docker images
-9. ✅ **Deploy and start the application**
-10. ✅ Display access URLs, database info, and useful commands
+1. ✅ **Auto-install Node.js** if missing (Ubuntu/Debian/RHEL/macOS)
+2. ✅ **Auto-install npm** (comes with Node.js)
+3. ✅ **Auto-install Git** if missing (recommended)
+4. ✅ **Auto-install Docker** if missing (Ubuntu/Debian/RHEL)
+5. ✅ **Auto-install Docker Compose** if missing
+6. ✅ **Auto-install PostgreSQL** if missing
+7. ✅ **Configure PostgreSQL** (create database, user, generate password)
+8. ✅ Install npm dependencies (backend & frontend)
+9. ✅ Create configuration files (.env with database credentials)
+10. ✅ Build Docker images
+11. ✅ **Deploy and start the application**
+12. ✅ Display access URLs, database info, and useful commands
 
 **setup.bat (Windows):**
 1. ✅ Check for dependencies

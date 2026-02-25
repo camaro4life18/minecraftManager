@@ -23,8 +23,10 @@ chmod +x setup.sh
 ```
 
 ✅ **On Ubuntu/Debian:** The script automatically:
+- Installs Node.js if not present
 - Installs Docker if not present
 - Installs PostgreSQL if not present
+- Installs Git (recommended)
 - Configures database (user, password, database)
 - Installs all dependencies
 - Builds and deploys the application

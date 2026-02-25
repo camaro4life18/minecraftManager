@@ -81,9 +81,10 @@ chmod +x setup.sh
 ```
 
 The script will:
-- ✅ Check for all dependencies (Node.js, Docker, PostgreSQL)
+- ✅ **Auto-install Node.js** if not present (Ubuntu/Debian/RHEL/macOS)
 - ✅ **Auto-install Docker** if not present (Ubuntu/Debian/RHEL)
 - ✅ **Auto-install PostgreSQL** if not present
+- ✅ **Auto-install Git** (recommended)
 - ✅ **Configure database** (creates user, database, sets credentials)
 - ✅ Install all project dependencies
 - ✅ Create configuration files with database credentials
