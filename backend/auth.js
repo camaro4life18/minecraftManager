@@ -15,9 +15,17 @@ export function generateToken(userId, username, role) {
 
 // Middleware to verify JWT token
 export function verifyToken(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1];
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader) {
+    console.log('❌ No authorization header');
+    return res.status(401).json({ error: 'No token provided' });
+  }
+
+  const token = authHeader.split(' ')[1];
 
   if (!token) {
+    console.log('❌ Token malformed - no bearer token found');
     return res.status(401).json({ error: 'No token provided' });
   }
 
@@ -26,10 +34,11 @@ export function verifyToken(req, res, next) {
     req.user = decoded;
     next();
   } catch (error) {
+    console.log('❌ Token verification failed:', error.message);
     if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired' });
+      return res.status(401).json({ error: 'Token expired', message: 'Please log in again' });
     }
-    return res.status(401).json({ error: 'Invalid token' });
+    return res.status(401).json({ error: 'Invalid token', message: error.message });
   }
 }
 

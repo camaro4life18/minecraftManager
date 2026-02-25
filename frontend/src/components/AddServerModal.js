@@ -19,7 +19,7 @@ function AddServerModal({ isOpen, onClose, onAdd, apiBase }) {
     try {
       const response = await fetch(`${apiBase}/api/proxmox/available-servers`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
       });
 
@@ -56,7 +56,7 @@ function AddServerModal({ isOpen, onClose, onAdd, apiBase }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         },
         body: JSON.stringify({
           vmid: selectedServer.vmid,
