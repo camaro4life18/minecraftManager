@@ -654,76 +654,34 @@ async function startServer() {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 20;
         const search = req.query.search || '';
-        const statusFilter = req.query.status || '';
-        const sortBy = req.query.sortBy || 'vmid';
+        const sortBy = req.query.sortBy || 'id';
         const sortOrder = req.query.sortOrder || 'asc';
 
-        // Load Proxmox config from database (updated in real-time when admin saves config)
-        console.log('📋 Loading Proxmox config from database...');
-        const proxmoxHost = await AppConfig.get('proxmox_host');
-        const proxmoxUsername = await AppConfig.get('proxmox_username');
-        const proxmoxPassword = await AppConfig.get('proxmox_password');
-        const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
-
-        if (!proxmoxHost || !proxmoxUsername || !proxmoxPassword) {
-          return res.status(400).json({ 
-            error: 'Proxmox not configured',
-            message: 'Please configure Proxmox credentials in Admin Settings → Configuration'
-          });
-        }
-
-        // Create a fresh ProxmoxClient with current database credentials
-        const currentProxmox = new ProxmoxClient({
-          host: proxmoxHost,
-          username: proxmoxUsername,
-          password: proxmoxPassword,
-          realm: proxmoxRealm
-        });
-
-        // Get all servers from Proxmox
-        console.log(`📋 Fetching servers from Proxmox (${proxmoxHost})...`);
-        let servers = await currentProxmox.getServers();
-        console.log(`✓ Found ${servers.length} servers with 'minecraft' in name`);
-        
-        // Enrich servers with creator information and seed
-        const enrichedServers = await Promise.all(
-          servers.map(async (server) => {
-            try {
-              const creator = await ManagedServer.getCreator(server.vmid);
-              const serverRecord = await ManagedServer.getServer(server.vmid);
-              return {
-                ...server,
-                creator_id: creator,
-                is_owned_by_user: creator === req.user.userId,
-                seed: serverRecord?.seed || null
-              };
-            } catch (enrichError) {
-              console.error(`⚠️  Error enriching server ${server.vmid}:`, enrichError.message);
-              // Return server with partial data if enrichment fails
-              return {
-                ...server,
-                creator_id: null,
-                is_owned_by_user: false,
-                seed: null
-              };
-            }
-          })
+        // Get managed servers from database
+        console.log('📋 Fetching managed servers from database...');
+        const result = await pool.query(
+          'SELECT * FROM managed_servers ORDER BY id'
         );
-
+        
+        let servers = result.rows.map(row => ({
+          id: row.id,
+          vmid: row.vmid,
+          name: row.server_name,
+          creator_id: row.creator_id,
+          is_owned_by_user: row.creator_id === req.user.userId,
+          seed: row.seed,
+          created_at: row.created_at
+        }));
+        
+        console.log(`✓ Found ${servers.length} managed servers`);
+        
         // Apply filters
-        let filteredServers = enrichedServers;
+        let filteredServers = servers;
 
         // Search filter (by name)
         if (search) {
           filteredServers = filteredServers.filter(server =>
             server.name.toLowerCase().includes(search.toLowerCase())
-          );
-        }
-
-        // Status filter
-        if (statusFilter) {
-          filteredServers = filteredServers.filter(server =>
-            server.status === statusFilter
           );
         }
 
@@ -763,6 +721,174 @@ async function startServer() {
       } catch (error) {
         console.error('❌ Error fetching servers:', error);
         res.status(500).json({ error: error.message, details: error.stack });
+      }
+    });
+
+    // Get available servers from Proxmox (for adding to managed list) - protected
+    app.get('/api/proxmox/available-servers', verifyToken, async (req, res) => {
+      try {
+        // Check if user is admin
+        if (req.user.role !== 'admin') {
+          return res.status(403).json({ error: 'Only admins can view available servers' });
+        }
+
+        // Load Proxmox config from database
+        const proxmoxHost = await AppConfig.get('proxmox_host');
+        const proxmoxUsername = await AppConfig.get('proxmox_username');
+        const proxmoxPassword = await AppConfig.get('proxmox_password');
+        const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
+
+        if (!proxmoxHost || !proxmoxUsername || !proxmoxPassword) {
+          return res.status(400).json({ 
+            error: 'Proxmox not configured',
+            message: 'Please configure Proxmox credentials in Admin Settings → Configuration'
+          });
+        }
+
+        // Get all servers from Proxmox (not just minecraft-named ones)
+        const currentProxmox = new ProxmoxClient({
+          host: proxmoxHost,
+          username: proxmoxUsername,
+          password: proxmoxPassword,
+          realm: proxmoxRealm
+        });
+
+        console.log('📋 Fetching all available servers from Proxmox...');
+        let allServers = [];
+
+        try {
+          if (!currentProxmox.token) {
+            await currentProxmox.authenticate();
+          }
+
+          const response = await currentProxmox.api.get('/nodes');
+          const nodes = response.data.data;
+
+          for (const node of nodes) {
+            // Get QEMU VMs
+            const vmsResponse = await currentProxmox.api.get(`/nodes/${node.node}/qemu`);
+            const vms = vmsResponse.data.data || [];
+            allServers.push(...vms.map(vm => ({
+              vmid: vm.vmid,
+              name: vm.name,
+              type: 'qemu',
+              node: node.node,
+              status: vm.status
+            })));
+
+            // Get LXC containers
+            const lxcResponse = await currentProxmox.api.get(`/nodes/${node.node}/lxc`);
+            const lxcs = lxcResponse.data.data || [];
+            allServers.push(...lxcs.map(lxc => ({
+              vmid: lxc.vmid,
+              name: lxc.hostname,
+              type: 'lxc',
+              node: node.node,
+              status: lxc.status
+            })));
+          }
+        } catch (error) {
+          return res.status(500).json({ 
+            error: 'Failed to fetch servers from Proxmox',
+            message: error.message 
+          });
+        }
+
+        // Get already managed server IDs
+        const managedResult = await pool.query('SELECT vmid FROM managed_servers');
+        const managedVmids = new Set(managedResult.rows.map(r => r.vmid));
+
+        // Filter out already managed servers
+        const availableServers = allServers.filter(s => !managedVmids.has(s.vmid));
+
+        console.log(`✓ Found ${availableServers.length} available servers (${allServers.length} total, ${managedVmids.size} already managed)`);
+        res.json({ servers: availableServers });
+      } catch (error) {
+        console.error('❌ Error fetching available servers:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Add a server to managed list - protected (admin only)
+    app.post('/api/servers', verifyToken, async (req, res) => {
+      try {
+        // Check if user is admin
+        if (req.user.role !== 'admin') {
+          return res.status(403).json({ error: 'Only admins can add servers' });
+        }
+
+        const { vmid, serverName } = req.body;
+        
+        if (!vmid || !serverName) {
+          return res.status(400).json({ 
+            error: 'Missing required fields: vmid, serverName' 
+          });
+        }
+
+        // Check if already managed
+        const existing = await pool.query(
+          'SELECT id FROM managed_servers WHERE vmid = $1',
+          [vmid]
+        );
+
+        if (existing.rows.length > 0) {
+          return res.status(400).json({ 
+            error: 'Server already in managed list' 
+          });
+        }
+
+        // Add to managed servers
+        const result = await pool.query(
+          'INSERT INTO managed_servers (vmid, creator_id, server_name) VALUES ($1, $2, $3) RETURNING *',
+          [vmid, req.user.userId, serverName]
+        );
+
+        console.log(`✓ Added server ${vmid} (${serverName}) to managed list`);
+        res.status(201).json({
+          id: result.rows[0].id,
+          vmid: result.rows[0].vmid,
+          name: result.rows[0].server_name,
+          message: 'Server added to managed list'
+        });
+      } catch (error) {
+        console.error('❌ Error adding server:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Remove a server from managed list - protected (admin only)
+    app.delete('/api/servers/:id', verifyToken, async (req, res) => {
+      try {
+        // Check if user is admin
+        if (req.user.role !== 'admin') {
+          return res.status(403).json({ error: 'Only admins can remove servers' });
+        }
+
+        const serverId = req.params.id;
+
+        // Get server info first
+        const serverResult = await pool.query(
+          'SELECT vmid, server_name FROM managed_servers WHERE id = $1',
+          [serverId]
+        );
+
+        if (serverResult.rows.length === 0) {
+          return res.status(404).json({ error: 'Server not found' });
+        }
+
+        const { vmid, server_name } = serverResult.rows[0];
+
+        // Delete from managed servers
+        await pool.query(
+          'DELETE FROM managed_servers WHERE id = $1',
+          [serverId]
+        );
+
+        console.log(`✓ Removed server ${vmid} (${server_name}) from managed list`);
+        res.json({ message: 'Server removed from managed list' });
+      } catch (error) {
+        console.error('❌ Error removing server:', error);
+        res.status(500).json({ error: error.message });
       }
     });
 
