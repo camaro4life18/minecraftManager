@@ -516,25 +516,26 @@ echo ""
 print_step "Phase 6: Building Docker images"
 echo ""
 
-# Check if user has docker permissions
-if ! docker ps &> /dev/null; then
-    print_error "Docker permission denied - activating docker group..."
-    echo ""
-    echo "Your user was added to the docker group, but the group membership"
-    echo "is not yet active in this shell session."
-    echo ""
-    echo "Run this command to activate it and continue:"
-    echo ""
-    echo "  newgrp docker"
-    echo ""
-    echo "Then re-run this script starting from this point:"
-    echo "  bash setup.sh"
-    echo ""
-    exit 1
+# Check if user has docker permissions, and set up the command prefix
+DOCKER_PREFIX=""
+if ! docker ps &> /dev/null 2>&1; then
+    # Docker group not active in current session, use sg (switch group)
+    if groups | grep -q docker; then
+        print_info "Activating docker group permissions for build commands..."
+        DOCKER_PREFIX="sg docker -c"
+    else
+        # Not in docker group at all, use sudo
+        print_warning "Using sudo for Docker commands..."
+        DOCKER_PREFIX="sudo"
+    fi
 fi
 
 echo "🔨 Building Docker images (this may take a few minutes)..."
-$COMPOSE_CMD build
+if [ -n "$DOCKER_PREFIX" ]; then
+    $DOCKER_PREFIX "$COMPOSE_CMD build"
+else
+    $COMPOSE_CMD build
+fi
 
 print_success "Docker images built successfully"
 
@@ -543,7 +544,11 @@ print_step "Phase 7: Deploying application"
 echo ""
 
 echo "🚀 Starting containers..."
-$COMPOSE_CMD up -d
+if [ -n "$DOCKER_PREFIX" ]; then
+    $DOCKER_PREFIX "$COMPOSE_CMD up -d"
+else
+    $COMPOSE_CMD up -d
+fi
 
 print_success "Application deployed successfully!"
 
@@ -553,7 +558,11 @@ sleep 3
 # Check container status
 echo ""
 echo "📊 Container Status:"
-$COMPOSE_CMD ps
+if [ -n "$DOCKER_PREFIX" ]; then
+    $DOCKER_PREFIX "$COMPOSE_CMD ps"
+else
+    $COMPOSE_CMD ps
+fi
 
 # Completion message
 echo ""
@@ -585,10 +594,19 @@ echo "  Password: admin123"
 echo "  ⚠️  Change this in production!"
 echo ""
 echo "⚙️  Useful Commands:"
-echo "  View logs:    $COMPOSE_CMD logs -f"
-echo "  Stop app:     $COMPOSE_CMD down"
-echo "  Restart app:  $COMPOSE_CMD restart"
-echo "  View status:  $COMPOSE_CMD ps"
+if [ -n "$DOCKER_PREFIX" ]; then
+    echo "  View logs:    $DOCKER_PREFIX '$COMPOSE_CMD logs -f'"
+    echo "  Stop app:     $DOCKER_PREFIX '$COMPOSE_CMD down'"
+    echo "  Restart app:  $DOCKER_PREFIX '$COMPOSE_CMD restart'"
+    echo "  View status:  $DOCKER_PREFIX '$COMPOSE_CMD ps'"
+    echo ""
+    echo "  💡 Note: Log out and back in to use docker without '$DOCKER_PREFIX'"
+else
+    echo "  View logs:    $COMPOSE_CMD logs -f"
+    echo "  Stop app:     $COMPOSE_CMD down"
+    echo "  Restart app:  $COMPOSE_CMD restart"
+    echo "  View status:  $COMPOSE_CMD ps"
+fi
 echo ""
 echo "📚 Documentation:"
 echo "  - README.md: Project overview"
