@@ -64,6 +64,22 @@ detect_os() {
     fi
 }
 
+# Detect machine IP address
+detect_ip() {
+    # Try to get the primary non-loopback IP address
+    MACHINE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    
+    # Fallback for macOS
+    if [ -z "$MACHINE_IP" ]; then
+        MACHINE_IP=$(ifconfig 2>/dev/null | grep "inet " | grep -v "127.0.0.1" | head -1 | awk '{print $2}')
+    fi
+    
+    # Final fallback
+    if [ -z "$MACHINE_IP" ]; then
+        MACHINE_IP="localhost"
+    fi
+}
+
 # Main setup
 print_header
 
@@ -78,6 +94,10 @@ echo "⚠️  This script requires sudo privileges to install system packages."
 echo ""
 
 detect_os
+detect_ip
+
+echo "Detected Machine IP: $MACHINE_IP"
+echo ""
 
 # PHASE 1: CHECK ALL DEPENDENCIES
 print_step "Phase 1: Checking System Dependencies"
@@ -433,6 +453,16 @@ if [ ! -f .env ]; then
     echo "📝 Creating .env file from template..."
     cp .env.example .env
     
+    # Add Frontend API URL
+    echo "🌐 Setting Frontend API URL: http://${MACHINE_IP}:5000"
+    if grep -q "^FRONTEND_API_URL=" .env; then
+        sed -i.bak "s|^FRONTEND_API_URL=.*|FRONTEND_API_URL=http://${MACHINE_IP}:5000|" .env
+    else
+        echo "" >> .env
+        echo "# Frontend Configuration (auto-generated)" >> .env
+        echo "FRONTEND_API_URL=http://${MACHINE_IP}:5000" >> .env
+    fi
+    
     # If PostgreSQL was configured, update .env with database credentials
     if [ ! -z "$PG_PASSWORD" ]; then
         echo ""
@@ -463,6 +493,16 @@ if [ ! -f .env ]; then
     echo ""
 else
     print_success ".env file already exists"
+    
+    # Update FRONTEND_API_URL with detected IP
+    echo "🌐 Updating Frontend API URL: http://${MACHINE_IP}:5000"
+    if grep -q "^FRONTEND_API_URL=" .env; then
+        sed -i.bak "s|^FRONTEND_API_URL=.*|FRONTEND_API_URL=http://${MACHINE_IP}:5000|" .env
+    else
+        echo "" >> .env
+        echo "# Frontend Configuration (auto-generated)" >> .env
+        echo "FRONTEND_API_URL=http://${MACHINE_IP}:5000" >> .env
+    fi
     
     # Update with PostgreSQL credentials if they were just created
     if [ ! -z "$PG_PASSWORD" ]; then
