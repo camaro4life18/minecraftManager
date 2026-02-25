@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import ServerList from './components/ServerList';
 import AddServerModal from './components/AddServerModal';
+import SSHConfigModal from './components/SSHConfigModal';
+import ServerManagementModal from './components/ServerManagementModal';
 import CloneForm from './components/CloneForm';
 import LoginPage from './components/LoginPage';
 import AdminSettings from './components/AdminSettings';
@@ -18,6 +20,8 @@ function AppContent() {
   const [error, setError] = useState(null);
   const [showCloneForm, setShowCloneForm] = useState(false);
   const [showAddServerModal, setShowAddServerModal] = useState(false);
+  const [showSSHConfigModal, setShowSSHConfigModal] = useState(false);
+  const [showManagementModal, setShowManagementModal] = useState(false);
   const [selectedServer, setSelectedServer] = useState(null);
   const [currentPage, setCurrentPage] = useState('servers'); // 'servers' or 'admin' or 'logs' or 'metrics' or 'sessions'
   const { isAuthenticated, token, logout, isAdmin, user, loading: authLoading } = useAuth();
@@ -145,6 +149,22 @@ function AppContent() {
     fetchServers();
   };
 
+  const handleConfigureSSH = (server) => {
+    setSelectedServer(server);
+    setShowSSHConfigModal(true);
+  };
+
+  const handleSSHConfigSuccess = () => {
+    setShowSSHConfigModal(false);
+    setSelectedServer(null);
+    alert('SSH configured successfully!');
+  };
+
+  const handleManageServer = (server) => {
+    setSelectedServer(server);
+    setShowManagementModal(true);
+  };
+
   return (
     <div className="App">
       <header className="header">
@@ -215,6 +235,8 @@ function AppContent() {
                   onClone={handleCloneClick}
                   onDelete={handleDeleteServer}
                   onAddServer={() => setShowAddServerModal(true)}
+                  onConfigureSSH={handleConfigureSSH}
+                  onManageServer={handleManageServer}
                   isAdmin={isAdmin}
                   currentUserId={user?.id}
                   pagination={pagination}
@@ -239,6 +261,21 @@ function AppContent() {
                     onSuccess={handleCloneSuccess}
                     apiBase={API_BASE}
                     token={token}
+                  />
+                )}
+
+                {showSSHConfigModal && selectedServer && (
+                  <SSHConfigModal
+                    server={selectedServer}
+                    onClose={() => setShowSSHConfigModal(false)}
+                    onSuccess={handleSSHConfigSuccess}
+                  />
+                )}
+
+                {showManagementModal && selectedServer && (
+                  <ServerManagementModal
+                    server={selectedServer}
+                    onClose={() => setShowManagementModal(false)}
                   />
                 )}
               </>

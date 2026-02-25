@@ -105,6 +105,63 @@ export async function initializeDatabase() {
       }
     });
 
+    // Add SSH configuration columns
+    await client.query(`
+      ALTER TABLE managed_servers ADD COLUMN ssh_host VARCHAR(255)
+    `).catch(err => {
+      if (!err.message.includes('already exists')) {
+        console.warn('Add ssh_host column:', err.message);
+      }
+    });
+
+    await client.query(`
+      ALTER TABLE managed_servers ADD COLUMN ssh_port INTEGER DEFAULT 22
+    `).catch(err => {
+      if (!err.message.includes('already exists')) {
+        console.warn('Add ssh_port column:', err.message);
+      }
+    });
+
+    await client.query(`
+      ALTER TABLE managed_servers ADD COLUMN ssh_username VARCHAR(255)
+    `).catch(err => {
+      if (!err.message.includes('already exists')) {
+        console.warn('Add ssh_username column:', err.message);
+      }
+    });
+
+    await client.query(`
+      ALTER TABLE managed_servers ADD COLUMN ssh_private_key TEXT
+    `).catch(err => {
+      if (!err.message.includes('already exists')) {
+        console.warn('Add ssh_private_key column:', err.message);
+      }
+    });
+
+    await client.query(`
+      ALTER TABLE managed_servers ADD COLUMN minecraft_path VARCHAR(500) DEFAULT '/opt/minecraft'
+    `).catch(err => {
+      if (!err.message.includes('already exists')) {
+        console.warn('Add minecraft_path column:', err.message);
+      }
+    });
+
+    await client.query(`
+      ALTER TABLE managed_servers ADD COLUMN minecraft_version VARCHAR(100)
+    `).catch(err => {
+      if (!err.message.includes('already exists')) {
+        console.warn('Add minecraft_version column:', err.message);
+      }
+    });
+
+    await client.query(`
+      ALTER TABLE managed_servers ADD COLUMN ssh_configured BOOLEAN DEFAULT false
+    `).catch(err => {
+      if (!err.message.includes('already exists')) {
+        console.warn('Add ssh_configured column:', err.message);
+      }
+    });
+
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_managed_servers_creator_id ON managed_servers(creator_id)
     `).catch(err => console.warn('Create index idx_managed_servers_creator_id:', err.message));
@@ -385,6 +442,34 @@ export const ManagedServer = {
     await pool.query(
       'UPDATE managed_servers SET seed = $1 WHERE vmid = $2',
       [seed, vmId]
+    );
+  },
+
+  updateSSHConfig: async (vmId, sshConfig) => {
+    const { host, port, username, privateKey, minecraftPath } = sshConfig;
+    await pool.query(
+      `UPDATE managed_servers 
+       SET ssh_host = $1, ssh_port = $2, ssh_username = $3, 
+           ssh_private_key = $4, minecraft_path = $5, ssh_configured = true 
+       WHERE vmid = $6`,
+      [host, port || 22, username, privateKey, minecraftPath || '/opt/minecraft', vmId]
+    );
+  },
+
+  getSSHConfig: async (vmId) => {
+    const result = await pool.query(
+      `SELECT ssh_host, ssh_port, ssh_username, ssh_private_key, 
+              minecraft_path, ssh_configured 
+       FROM managed_servers WHERE vmid = $1`,
+      [vmId]
+    );
+    return result.rows[0] || null;
+  },
+
+  updateMinecraftVersion: async (vmId, version) => {
+    await pool.query(
+      'UPDATE managed_servers SET minecraft_version = $1 WHERE vmid = $2',
+      [version, vmId]
     );
   },
 

@@ -11,16 +11,18 @@
     "init-db": "node init-db.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
     "axios": "^1.6.5",
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "jsonwebtoken": "^9.0.2",
-    "bcryptjs": "^2.4.3",
-    "pg": "^8.11.3",
+    "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
-    "swagger-ui-express": "^5.0.0",
-    "swagger-jsdoc": "^6.2.8"
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "pg": "^8.11.3",
+    "ssh2": "^1.17.0",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

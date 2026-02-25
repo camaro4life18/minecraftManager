@@ -5,8 +5,11 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
+import multer from 'multer';
+import path from 'path';
 import ProxmoxClient from './proxmoxClient.js';
 import VelocityClient from './velocityClient.js';
+import SSHClient, { MinecraftServerManager } from './sshClient.js';
 import { 
   initializeDatabase, 
   User, 
@@ -78,6 +81,12 @@ async function startServer() {
     app.use(express.json());
     app.use(metricsMiddleware); // Track API metrics
     app.use('/api/', generalLimiter); // Apply rate limiting to all API routes
+
+    // Multer configuration for plugin uploads
+    const upload = multer({ 
+      dest: 'uploads/',
+      limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+    });
 
     // ============================================
     // API DOCUMENTATION
@@ -1069,6 +1078,360 @@ async function startServer() {
         res.status(500).json({ error: error.message });
       }
     });
+
+    // ============================================
+    // MINECRAFT SERVER MANAGEMENT ROUTES
+    // ============================================
+
+    // Helper function to get SSH client for a server
+    const getSSHClient = async (vmid) => {
+      const sshConfig = await ManagedServer.getSSHConfig(vmid);
+      if (!sshConfig || !sshConfig.ssh_configured) {
+        throw new Error('SSH not configured for this server');
+      }
+      
+      return new SSHClient({
+        host: sshConfig.ssh_host,
+        port: sshConfig.ssh_port,
+        username: sshConfig.ssh_username,
+        privateKey: sshConfig.ssh_private_key
+      });
+    };
+
+    // Helper function to get Minecraft manager
+    const getMinecraftManager = async (vmid) => {
+      const ssh = await getSSHClient(vmid);
+      const sshConfig = await ManagedServer.getSSHConfig(vmid);
+      return new MinecraftServerManager(ssh, sshConfig.minecraft_path);
+    };
+
+    // Configure SSH for a server (admin or creator only)
+    app.post('/api/servers/:vmid/ssh-config', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        
+        // Check permissions
+        const creatorId = await ManagedServer.getCreator(vmid);
+        if (req.user.role !== 'admin' && creatorId !== req.user.userId) {
+          return res.status(403).json({ error: 'Only admins or server creators can configure SSH' });
+        }
+
+        const { host, port, username, privateKey, minecraftPath } = req.body;
+        
+        if (!host || !username || !privateKey) {
+          return res.status(400).json({ 
+            error: 'Missing required fields: host, username, privateKey' 
+          });
+        }
+
+        // Test SSH connection
+        try {
+          const testSSH = new SSHClient({ host, port, username, privateKey });
+          await testSSH.executeCommand('echo "SSH test successful"');
+        } catch (error) {
+          return res.status(400).json({ 
+            error: `SSH connection test failed: ${error.message}` 
+          });
+        }
+
+        await ManagedServer.updateSSHConfig(vmid, { 
+          host, 
+          port, 
+          username, 
+          privateKey, 
+          minecraftPath 
+        });
+
+        res.json({ success: true, message: 'SSH configured successfully' });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get SSH configuration status (admin or creator only)
+    app.get('/api/servers/:vmid/ssh-config', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        
+        // Check permissions
+        const creatorId = await ManagedServer.getCreator(vmid);
+        if (req.user.role !== 'admin' && creatorId !== req.user.userId) {
+          return res.status(403).json({ error: 'Permission denied' });
+        }
+
+        const sshConfig = await ManagedServer.getSSHConfig(vmid);
+        
+        if (!sshConfig) {
+          return res.json({ configured: false });
+        }
+
+        // Don't send the private key to the client
+        const { ssh_private_key, ...safeConfig } = sshConfig;
+        
+        res.json({
+          configured: sshConfig.ssh_configured,
+          host: sshConfig.ssh_host,
+          port: sshConfig.ssh_port,
+          username: sshConfig.ssh_username,
+          minecraftPath: sshConfig.minecraft_path
+        });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get Minecraft server status
+    app.get('/api/servers/:vmid/minecraft/status', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const manager = await getMinecraftManager(vmid);
+        const status = await manager.getStatus();
+        res.json(status);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Start Minecraft server service
+    app.post('/api/servers/:vmid/minecraft/start', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const manager = await getMinecraftManager(vmid);
+        const success = await manager.start();
+        res.json({ success });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Stop Minecraft server service
+    app.post('/api/servers/:vmid/minecraft/stop', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const manager = await getMinecraftManager(vmid);
+        const success = await manager.stop();
+        res.json({ success });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Restart Minecraft server service
+    app.post('/api/servers/:vmid/minecraft/restart', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const manager = await getMinecraftManager(vmid);
+        const success = await manager.restart();
+        res.json({ success });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get server.properties
+    app.get('/api/servers/:vmid/minecraft/properties', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const manager = await getMinecraftManager(vmid);
+        const properties = await manager.getServerProperties();
+        res.json(properties);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Update server.properties
+    app.patch('/api/servers/:vmid/minecraft/properties', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        
+        // Check permissions - admin or creator only
+        const creatorId = await ManagedServer.getCreator(vmid);
+        if (req.user.role !== 'admin' && creatorId !== req.user.userId) {
+          return res.status(403).json({ error: 'Only admins or server creators can update properties' });
+        }
+
+        const manager = await getMinecraftManager(vmid);
+        await manager.updateServerProperties(req.body);
+        res.json({ success: true, message: 'Properties updated successfully' });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get Minecraft server version
+    app.get('/api/servers/:vmid/minecraft/version', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const manager = await getMinecraftManager(vmid);
+        const version = await manager.getVersion();
+        res.json({ version });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Update Minecraft server version
+    app.post('/api/servers/:vmid/minecraft/update-version', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        
+        // Check permissions - admin or creator only
+        const creatorId = await ManagedServer.getCreator(vmid);
+        if (req.user.role !== 'admin' && creatorId !== req.user.userId) {
+          return res.status(403).json({ error: 'Only admins or server creators can update version' });
+        }
+
+        const { downloadUrl, jarName } = req.body;
+        
+        if (!downloadUrl || !jarName) {
+          return res.status(400).json({ 
+            error: 'Missing required fields: downloadUrl, jarName' 
+          });
+        }
+
+        const manager = await getMinecraftManager(vmid);
+        const result = await manager.updateVersion(downloadUrl, jarName);
+        
+        if (result.success) {
+          await ManagedServer.updateMinecraftVersion(vmid, jarName);
+        }
+        
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // List installed plugins
+    app.get('/api/servers/:vmid/minecraft/plugins', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const manager = await getMinecraftManager(vmid);
+        const plugins = await manager.listPlugins();
+        res.json({ plugins });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Install plugin from URL
+    app.post('/api/servers/:vmid/minecraft/plugins', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        
+        // Check permissions - admin or creator only
+        const creatorId = await ManagedServer.getCreator(vmid);
+        if (req.user.role !== 'admin' && creatorId !== req.user.userId) {
+          return res.status(403).json({ error: 'Only admins or server creators can install plugins' });
+        }
+
+        const { pluginName, downloadUrl } = req.body;
+        
+        if (!pluginName || !downloadUrl) {
+          return res.status(400).json({ 
+            error: 'Missing required fields: pluginName, downloadUrl' 
+          });
+        }
+
+        const manager = await getMinecraftManager(vmid);
+        const success = await manager.installPlugin(pluginName, downloadUrl);
+        
+        res.json({ success, message: success ? 'Plugin installed successfully' : 'Failed to install plugin' });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Upload plugin file
+    app.post('/api/servers/:vmid/minecraft/plugins/upload', verifyToken, upload.single('plugin'), async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        
+        // Check permissions - admin or creator only
+        const creatorId = await ManagedServer.getCreator(vmid);
+        if (req.user.role !== 'admin' && creatorId !== req.user.userId) {
+          return res.status(403).json({ error: 'Only admins or server creators can upload plugins' });
+        }
+
+        if (!req.file) {
+          return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        const pluginName = req.file.originalname;
+        const manager = await getMinecraftManager(vmid);
+        await manager.uploadPlugin(req.file.path, pluginName);
+        
+        // Clean up uploaded file
+        const fs = await import('fs');
+        fs.unlinkSync(req.file.path);
+        
+        res.json({ success: true, message: 'Plugin uploaded successfully', pluginName });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Delete a plugin
+    app.delete('/api/servers/:vmid/minecraft/plugins/:pluginName', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        
+        // Check permissions - admin or creator only
+        const creatorId = await ManagedServer.getCreator(vmid);
+        if (req.user.role !== 'admin' && creatorId !== req.user.userId) {
+          return res.status(403).json({ error: 'Only admins or server creators can delete plugins' });
+        }
+
+        const manager = await getMinecraftManager(vmid);
+        const success = await manager.removePlugin(req.params.pluginName);
+        
+        res.json({ success, message: success ? 'Plugin deleted successfully' : 'Failed to delete plugin' });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get server logs
+    app.get('/api/servers/:vmid/minecraft/logs', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const lines = parseInt(req.query.lines) || 100;
+        const manager = await getMinecraftManager(vmid);
+        const logs = await manager.getLogs(lines);
+        res.json({ logs });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Run system updates
+    app.post('/api/servers/:vmid/system/update', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const manager = await getMinecraftManager(vmid);
+        const result = await manager.runSystemUpdate();
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get system information
+    app.get('/api/servers/:vmid/system/info', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const manager = await getMinecraftManager(vmid);
+        const info = await manager.getSystemInfo();
+        res.json({ info });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // ============================================
+    // HEALTH CHECK
+    // ============================================
 
     // Health check (no auth required)
     app.get('/api/health', (req, res) => {

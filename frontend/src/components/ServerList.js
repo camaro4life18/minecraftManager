@@ -6,6 +6,8 @@ function ServerList({
   onClone, 
   onDelete, 
   onAddServer,
+  onConfigureSSH,
+  onManageServer,
   isAdmin, 
   currentUserId,
   pagination,
@@ -78,12 +80,28 @@ function ServerList({
 
                 <div className="server-actions">
                   <button
+                    className="btn btn-success"
+                    onClick={() => onManageServer(server)}
+                    title="Manage Minecraft server"
+                  >
+                    ⚙️ Manage
+                  </button>
+                  <button
                     className="btn btn-primary"
                     onClick={() => onClone(server)}
                     title="Clone this server"
                   >
                     📋 Clone
                   </button>
+                  {(isAdmin || server.is_owned_by_user) && (
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => onConfigureSSH(server)}
+                      title="Configure SSH access"
+                    >
+                      🔑 SSH
+                    </button>
+                  )}
                   {isAdmin && (
                     <button
                       className="btn btn-delete"
