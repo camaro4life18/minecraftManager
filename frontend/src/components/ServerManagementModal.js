@@ -109,14 +109,35 @@ function ServerManagementModal({ server, onClose }) {
             const metadata = {};
             for (const pluginName of data.plugins) {
               try {
-                const slug = pluginName.toLowerCase().replace(/\.jar$/, '').replace(/ /g, '-');
+                // Extract plugin name without version numbers and suffixes
+                // Examples: 
+                //   "EssentialsX-2.22.0.jar" -> "essentialsx"
+                //   "Chunky-Bukkit-1.4.40.jar" -> "chunky"
+                //   "bluemap-5.11-paper.jar" -> "bluemap"
+                //   "CoreProtect-23.2.jar" -> "coreprotect"
+                let slug = pluginName.replace(/\.jar$/i, ''); // Remove .jar
+                
+                // Remove common suffixes like -Bukkit, -Paper, -Spigot, etc.
+                slug = slug.replace(/-?(Bukkit|Paper|Spigot|Sponge|Velocity|Waterfall)$/i, '');
+                
+                // Remove version patterns (numbers, dots, dashes at the end)
+                // Match patterns like: -1.2.3, -v1.2.3, _1.2.3, 1.2.3, -dev+123, etc.
+                slug = slug.replace(/[-_]?(v?\d+[\d\.\-+]+[\w\-+]*)$/i, '');
+                
+                // Convert to lowercase and replace spaces/underscores with dashes
+                slug = slug.toLowerCase().replace(/[_\s]+/g, '-');
+                
+                console.log(`Looking up plugin: ${pluginName} -> slug: ${slug}`);
+                
                 const metaRes = await fetch(
                   `${process.env.REACT_APP_API_URL}/api/minecraft/plugins/${slug}`,
                   { headers: { 'Authorization': `Bearer ${token}` } }
                 );
                 if (metaRes.ok) {
                   const metaData = await metaRes.json();
-                  metadata[pluginName] = metaData;
+                  if (metaData.found !== false) {
+                    metadata[pluginName] = metaData;
+                  }
                 }
               } catch (err) {
                 console.error(`Failed to fetch metadata for ${pluginName}:`, err);

@@ -766,7 +766,19 @@ export class MinecraftServerManager {
       console.log(`📦 Upgrading plugin: ${pluginName}`);
 
       // Extract plugin slug from jar name
-      const slug = pluginName.toLowerCase().replace(/\.jar$/, '').replace(/ /g, '-');
+      // Remove .jar extension
+      let slug = pluginName.replace(/\.jar$/i, '');
+      
+      // Remove platform suffixes (Bukkit, Paper, Spigot, etc.)
+      slug = slug.replace(/-?(Bukkit|Paper|Spigot|Sponge|Velocity|Waterfall)$/i, '');
+      
+      // Remove version patterns (e.g., -1.2.3, -2.0.0-dev+30-abc123, _v1.0, etc.)
+      slug = slug.replace(/[-_]?(v?\d+[\d\.\-+]+[\w\-+]*)$/i, '');
+      
+      // Normalize to lowercase and replace spaces/underscores with hyphens
+      slug = slug.toLowerCase().replace(/[_\s]+/g, '-');
+      
+      console.log(`🔍 Plugin slug extraction: ${pluginName} -> ${slug}`);
       const downloadUrl = `https://hangar.papermc.io/api/v1/projects/${slug}/latest/download`;
       
       const tempPath = `/tmp/${pluginName}`;
