@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import ServerList from './components/ServerList';
+import AddServerModal from './components/AddServerModal';
 import CloneForm from './components/CloneForm';
 import LoginPage from './components/LoginPage';
 import AdminSettings from './components/AdminSettings';
@@ -16,6 +17,7 @@ function AppContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showCloneForm, setShowCloneForm] = useState(false);
+  const [showAddServerModal, setShowAddServerModal] = useState(false);
   const [selectedServer, setSelectedServer] = useState(null);
   const [currentPage, setCurrentPage] = useState('servers'); // 'servers' or 'admin' or 'logs' or 'metrics' or 'sessions'
   const { isAuthenticated, token, logout, isAdmin, user, loading: authLoading } = useAuth();
@@ -24,8 +26,7 @@ function AppContent() {
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [sortBy, setSortBy] = useState('vmid');
+  const [sortBy, setSortBy] = useState('id');
 
   // Fetch servers
   const fetchServers = async () => {
@@ -37,7 +38,6 @@ function AppContent() {
         page: page.toString(),
         limit: '20',
         ...(searchTerm && { search: searchTerm }),
-        ...(statusFilter && { status: statusFilter }),
         sortBy,
         sortOrder: 'asc'
       });
@@ -74,7 +74,7 @@ function AppContent() {
       const interval = setInterval(fetchServers, 10000);
       return () => clearInterval(interval);
     }
-  }, [isAuthenticated, token, authLoading, page, searchTerm, statusFilter, sortBy]);
+  }, [isAuthenticated, token, authLoading, page, searchTerm, sortBy]);
 
   if (authLoading) {
     return <div className="loading">Loading...</div>;
@@ -125,23 +125,27 @@ function AppContent() {
     }
   };
 
-  const handleDeleteServer = async (vmid) => {
-    if (!window.confirm('Are you sure you want to delete this server? This cannot be undone.')) {
+  const handleDeleteServer = async (serverId) => {
+    if (!window.confirm('Are you sure you want to remove this server from the managed list?')) {
       return;
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/servers/${vmid}`, {
+      const response = await fetch(`${API_BASE}/api/servers/${serverId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
-      if (!response.ok) throw new Error('Failed to delete server');
-      setTimeout(fetchServers, 1000);
+      if (!response.ok) throw new Error('Failed to remove server');
+      fetchServers();
     } catch (err) {
       setError(err.message);
     }
+  };
+
+  const handleAddServerSuccess = () => {
+    fetchServers();
   };
 
   return (
@@ -212,19 +216,23 @@ function AppContent() {
                 <ServerList
                   servers={servers}
                   onClone={handleCloneClick}
-                  onStart={handleStartServer}
-                  onStop={handleStopServer}
                   onDelete={handleDeleteServer}
+                  onAddServer={() => setShowAddServerModal(true)}
                   isAdmin={isAdmin}
                   currentUserId={user?.id}
                   pagination={pagination}
                   onPageChange={setPage}
                   searchTerm={searchTerm}
                   onSearchChange={setSearchTerm}
-                  statusFilter={statusFilter}
-                  onStatusFilterChange={setStatusFilter}
                   sortBy={sortBy}
                   onSortByChange={setSortBy}
+                />
+
+                <AddServerModal
+                  isOpen={showAddServerModal}
+                  onClose={() => setShowAddServerModal(false)}
+                  onAdd={handleAddServerSuccess}
+                  apiBase={API_BASE}
                 />
 
                 {showCloneForm && selectedServer && (
