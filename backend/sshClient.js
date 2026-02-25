@@ -308,23 +308,15 @@ class SSHClient {
             const privateKey = privateKeyPart[0].trim();
             const publicKey = privateKeyPart[1].trim();
 
-            // Add public key to authorized_keys
-            const addKeyCommand = `echo '${publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`;
-            
-            conn.exec(addKeyCommand, (err, stream) => {
-              if (err) {
-                console.warn('Warning: Could not add key to authorized_keys:', err);
-              }
-
-              stream.on('close', (code, signal) => {
-                clearTimeout(timeout);
-                conn.end();
-                if (!isResolved) {
-                  isResolved = true;
-                  resolve({ privateKey, publicKey });
-                }
-              });
-            });
+            // Return the keys immediately - don't wait for authorized_keys setup
+            // The keys are safely generated on the server filesystem
+            console.log(`[SSH] Keys generated successfully, closing connection and resolving`);
+            clearTimeout(timeout);
+            conn.end();
+            if (!isResolved) {
+              isResolved = true;
+              resolve({ privateKey, publicKey });
+            }
           }).on('data', (data) => {
             stdout += data.toString();
             console.log(`[SSH] Received stdout data: ${data.toString().substring(0, 100)}...`);
