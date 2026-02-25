@@ -392,8 +392,22 @@ export class MinecraftServerManager {
    * @private
    */
   async runAsMinecraft(command) {
-    // Run command as minecraft user via sudo, capturing owner
-    const fullCommand = `sudo -u ${this.minecraftUser} bash -c '${command.replace(/'/g, "'\\''")}'`;
+    // Try to run as current user first (for read-only operations)
+    // If it fails with permission denied, try with sudo
+    try {
+      console.log(`📋 Attempting to run command as current user: ${command.substring(0, 80)}...`);
+      const result = await this.ssh.executeCommand(command);
+      if (result.code === 0 || !result.stderr.includes('Permission denied')) {
+        return result; // Command succeeded or failed for non-permission reasons
+      }
+      console.log('⚠️  Permission denied, attempting with sudo...');
+    } catch (error) {
+      console.log('❌ Command failed, attempting with sudo:', error.message);
+    }
+
+    // If direct command failed with permission, try with sudo
+    const fullCommand = `sudo -n -u ${this.minecraftUser} bash -c '${command.replace(/'/g, "'\\''")}'`;
+    console.log(`📋 Running with sudo: ${fullCommand.substring(0, 80)}...`);
     return this.ssh.executeCommand(fullCommand);
   }
 
