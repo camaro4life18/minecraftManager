@@ -1751,33 +1751,46 @@ async function startServer() {
     // Get available PaperMC versions
     app.get('/api/minecraft/versions', verifyToken, async (req, res) => {
       try {
-        console.log('🔍 Fetching available PaperMC versions from website...');
+        console.log('🔍 Fetching available PaperMC versions...');
+
+        // Known latest builds (updated periodically) - override with actual latest
+        const knownLatestBuilds = {
+          '1.21.11': 117,
+          '1.21.10': 129,
+          '1.21.5': 114,
+          '1.21.4': 232,
+          '1.21.1': 133
+        };
 
         // Fetch the website HTML to extract actual available downloads
-        const websiteRes = await fetch('https://papermc.io/downloads/paper', { 
-          headers: { 'User-Agent': 'Mozilla/5.0' }
-        });
-        const html = await websiteRes.text();
-        
-        // Extract version/build info from download links in the HTML
-        // Format: paper-X.X.X-BUILD.jar
-        const buildRegex = /paper-([\d.a-z-]+)-(\d+)\.jar/g;
-        const versionBuildMap = {};
-        let match;
-        
-        while ((match = buildRegex.exec(html)) !== null) {
-          const version = match[1];
-          const build = parseInt(match[2]);
+        // This gives us the most recent builds
+        let websiteBuilds = {};
+        try {
+          const websiteRes = await fetch('https://papermc.io/downloads/paper', { 
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+          });
+          const html = await websiteRes.text();
           
-          // Keep track of the maximum build for each version
-          if (!versionBuildMap[version] || versionBuildMap[version] < build) {
-            versionBuildMap[version] = build;
+          // Extract version/build info from download links in the HTML
+          // Format: paper-X.X.X-BUILD.jar or paper-X.X.X-rcN-BUILD.jar
+          const buildRegex = /paper-([\d.a-z\-]+)-(\d+)\.jar/g;
+          let match;
+          
+          while ((match = buildRegex.exec(html)) !== null) {
+            const version = match[1];
+            const build = parseInt(match[2]);
+            
+            // Keep track of the maximum build for each version
+            if (!websiteBuilds[version] || websiteBuilds[version] < build) {
+              websiteBuilds[version] = build;
+            }
           }
+          console.log(`✓ Found ${Object.keys(websiteBuilds).length} versions with builds from website`);
+        } catch (e) {
+          console.warn('⚠️  Website scraping failed, falling back to API:', e.message);
         }
-        
-        console.log(`✓ Found ${Object.keys(versionBuildMap).length} versions with builds from website`);
-        
-        // Also fetch from API to get the list of versions
+
+        // Fetch version list from API
         const response = await fetch('https://api.papermc.io/v2/projects/paper');
         if (!response.ok) {
           throw new Error(`Failed to fetch from PaperMC API: ${response.statusText}`);
@@ -1786,16 +1799,48 @@ async function startServer() {
         const data = await response.json();
         const versionNumbers = data.versions.slice(-20).reverse(); // Get last 20 versions, reversed (newest first)
 
-        // Map version numbers to their latest builds from the website scrape
-        const versionsWithBuilds = versionNumbers.map(version => {
-          const build = versionBuildMap[version];
-          if (build) {
-            console.log(`✓ Version ${version}: Latest build = ${build} (from website)`);
-            return { version, build };
-          } else {
-            console.log(`⚠️  Version ${version}: No builds found on website, using API`);
-            return { version, build: null };
+        // Fetch version groups for detailed build info
+        let versionGroupBuilds = {};
+        try {
+          const versionGroups = data.versions.slice(-10).reverse();
+          for (const version of versionGroups) {
+            const vgRes = await fetch(`https://api.papermc.io/v2/projects/paper/version_group/${version}`);
+            if (vgRes.ok) {
+              const vgData = await vgRes.json();
+              if (vgData.versions && vgData.versions.length > 0) {
+                // Get the latest build from this version group
+                const builds = vgData.versions.map(v => parseInt(v.split('-').pop()));
+                versionGroupBuilds[version] = Math.max(...builds);
+              }
+            }
           }
+        } catch (e) {
+          console.warn('⚠️  Version groups failed:', e.message);
+        }
+
+        // Map version numbers to their latest builds with priority: website > version_group > known_latest
+        const versionsWithBuilds = versionNumbers.map(version => {
+          let build = null;
+          let source = '';
+          
+          if (websiteBuilds[version]) {
+            build = websiteBuilds[version];
+            source = 'website';
+          } else if (versionGroupBuilds[version]) {
+            build = versionGroupBuilds[version];
+            source = 'version_group';
+          } else if (knownLatestBuilds[version]) {
+            build = knownLatestBuilds[version];
+            source = 'known_latest';
+          }
+          
+          if (build) {
+            console.log(`✓ Version ${version}: Build ${build} (from ${source})`);
+          } else {
+            console.log(`⚠️  Version ${version}: No build info found`);
+          }
+          
+          return { version, build };
         });
 
         res.json({ versions: versionsWithBuilds });
