@@ -1159,7 +1159,7 @@ async function startServer() {
           return res.status(403).json({ error: 'Only admins or server creators can configure SSH' });
         }
 
-        const { host, port, username, privateKey, minecraftPath } = req.body;
+        const { host, port, username, privateKey, minecraftPath, minecraftUser } = req.body;
         
         if (!host || !username || !privateKey) {
           return res.status(400).json({ 
@@ -1168,8 +1168,9 @@ async function startServer() {
         }
 
         // Test SSH connection
+        let testSSH;
         try {
-          const testSSH = new SSHClient({ host, port, username, privateKey });
+          testSSH = new SSHClient({ host, port, username, privateKey });
           await testSSH.executeCommand('echo "SSH test successful"');
         } catch (error) {
           return res.status(400).json({ 
@@ -1177,15 +1178,73 @@ async function startServer() {
           });
         }
 
+        // Auto-detect Minecraft path if not provided
+        let finalMinecraftPath = minecraftPath;
+        let finalMinecraftUser = minecraftUser || 'minecraft';
+        
+        if (!minecraftPath) {
+          console.log('🔍 Auto-detecting Minecraft path...');
+          const commonPaths = [
+            '/opt/minecraft/paper',
+            '/opt/minecraft',
+            '/home/minecraft',
+            '/home/minecraft/paper',
+            '/srv/minecraft',
+            '/srv/minecraft/paper'
+          ];
+
+          for (const path of commonPaths) {
+            try {
+              const checkCmd = `test -d "${path}/plugins" && echo "FOUND" || echo "NOT_FOUND"`;
+              const result = await testSSH.executeCommand(checkCmd);
+              if (result.includes('FOUND')) {
+                finalMinecraftPath = path;
+                console.log(`✓ Auto-detected Minecraft path: ${path}`);
+                break;
+              }
+            } catch (err) {
+              // Continue to next path
+            }
+          }
+
+          if (!finalMinecraftPath) {
+            return res.status(400).json({ 
+              error: 'Could not auto-detect Minecraft path. Please manually specify the path (e.g., /opt/minecraft or /opt/minecraft/paper)' 
+            });
+          }
+        }
+
+        // Auto-detect Minecraft user if not provided
+        if (!minecraftUser) {
+          try {
+            console.log('🔍 Auto-detecting Minecraft user...');
+            const userCheckCmd = `find "${finalMinecraftPath}" -maxdepth 0 -exec stat -c '%U' {} \\; 2>/dev/null`;
+            const result = await testSSH.executeCommand(userCheckCmd);
+            const detectedUser = result.trim();
+            if (detectedUser && detectedUser !== 'root') {
+              finalMinecraftUser = detectedUser;
+              console.log(`✓ Auto-detected Minecraft user: ${detectedUser}`);
+            }
+          } catch (err) {
+            console.log('Could not auto-detect Minecraft user, using default: minecraft');
+          }
+        }
+
         await ManagedServer.updateSSHConfig(vmid, { 
           host, 
           port, 
           username, 
           privateKey, 
-          minecraftPath 
+          minecraftPath: finalMinecraftPath,
+          minecraftUser: finalMinecraftUser
         });
 
-        res.json({ success: true, message: 'SSH configured successfully' });
+        res.json({ 
+          success: true, 
+          message: 'SSH configured successfully',
+          detectedPath: finalMinecraftPath,
+          detectedUser: finalMinecraftUser
+        });
       } catch (error) {
         res.status(500).json({ error: error.message });
       }

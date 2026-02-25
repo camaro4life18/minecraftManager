@@ -21,7 +21,8 @@ function SSHConfigModal({ server, onClose, onSuccess }) {
     port: 22,
     username: 'root',
     privateKey: '',
-    minecraftPath: '/opt/minecraft'
+    minecraftPath: '',
+    minecraftUser: 'minecraft'
   });
 
   const handleGenerateKeys = async (e) => {
@@ -71,7 +72,8 @@ function SSHConfigModal({ server, onClose, onSuccess }) {
         port: generateForm.port,
         username: generateForm.username,
         privateKey: data.privateKey,
-        minecraftPath: '/opt/minecraft'
+        minecraftPath: '',
+        minecraftUser: 'minecraft'
       });
 
       // Switch to manual mode to show the key
@@ -112,7 +114,18 @@ function SSHConfigModal({ server, onClose, onSuccess }) {
         throw new Error(data.error || 'Failed to configure SSH');
       }
 
-      setSuccess('SSH configured successfully!');
+      const data = await response.json();
+      
+      // Show what was detected
+      let successMsg = 'SSH configured successfully!';
+      if (data.detectedPath) {
+        successMsg += `\nDetected Minecraft path: ${data.detectedPath}`;
+      }
+      if (data.detectedUser) {
+        successMsg += `\nDetected Minecraft user: ${data.detectedUser}`;
+      }
+      
+      setSuccess(successMsg);
       setTimeout(onSuccess, 2000);
     } catch (err) {
       setError(err.message);
@@ -302,10 +315,21 @@ function SSHConfigModal({ server, onClose, onSuccess }) {
                 type="text"
                 value={formData.minecraftPath}
                 onChange={(e) => setFormData({ ...formData, minecraftPath: e.target.value })}
-                placeholder="/opt/minecraft"
+                placeholder="/opt/minecraft or /opt/minecraft/paper"
                 required
               />
-              <small>Path where Minecraft server is installed on the VM</small>
+              <small>Path where Minecraft server is installed on the VM (leave empty for auto-detection)</small>
+            </div>
+
+            <div className="form-group">
+              <label>Minecraft User (optional):</label>
+              <input
+                type="text"
+                value={formData.minecraftUser}
+                onChange={(e) => setFormData({ ...formData, minecraftUser: e.target.value })}
+                placeholder="minecraft"
+              />
+              <small>User that runs the Minecraft server (leave empty for auto-detection, default: minecraft)</small>
             </div>
 
             <div className="modal-actions">

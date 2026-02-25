@@ -454,20 +454,20 @@ export const ManagedServer = {
   },
 
   updateSSHConfig: async (vmId, sshConfig) => {
-    const { host, port, username, privateKey, minecraftPath } = sshConfig;
+    const { host, port, username, privateKey, minecraftPath, minecraftUser } = sshConfig;
     await pool.query(
       `UPDATE managed_servers 
        SET ssh_host = $1, ssh_port = $2, ssh_username = $3, 
-           ssh_private_key = $4, minecraft_path = $5, ssh_configured = true 
-       WHERE vmid = $6`,
-      [host, port || 22, username, privateKey, minecraftPath || '/opt/minecraft', vmId]
+           ssh_private_key = $4, minecraft_path = $5, minecraft_user = $6, ssh_configured = true 
+       WHERE vmid = $7`,
+      [host, port || 22, username, privateKey, minecraftPath || '/opt/minecraft', minecraftUser || 'minecraft', vmId]
     );
   },
 
   getSSHConfig: async (vmId) => {
     const result = await pool.query(
       `SELECT ssh_host, ssh_port, ssh_username, ssh_private_key, 
-              minecraft_path, ssh_configured 
+              minecraft_path, minecraft_user, ssh_configured 
        FROM managed_servers WHERE vmid = $1`,
       [vmId]
     );
