@@ -1768,14 +1768,21 @@ async function startServer() {
           versionNumbers.map(async (version) => {
             try {
               const versionRes = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}`);
-              if (!versionRes.ok) return { version, build: null };
+              if (!versionRes.ok) {
+                console.log(`⚠️  Failed to fetch builds for ${version}: ${versionRes.status}`);
+                return { version, build: null };
+              }
               
               const versionData = await versionRes.json();
-              const latestBuild = versionData.builds[versionData.builds.length - 1];
+              
+              // Get the maximum build number (latest build)
+              const latestBuild = Math.max(...versionData.builds);
+              
+              console.log(`✓ Version ${version}: Latest build = ${latestBuild} (from ${versionData.builds.length} builds)`);
               
               return { version, build: latestBuild };
             } catch (error) {
-              console.error(`Error fetching build for ${version}:`, error);
+              console.error(`❌ Error fetching build for ${version}:`, error);
               return { version, build: null };
             }
           })
