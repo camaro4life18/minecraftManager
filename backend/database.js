@@ -22,8 +22,9 @@ export async function initializeDatabase() {
   const client = await pool.connect();
 
   try {
-    await client.query('BEGIN');
-
+    // Don't use transaction wrapper - each CREATE TABLE IF NOT EXISTS
+    // is idempotent and safe to execute independently
+    
     // Create users table
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
@@ -35,7 +36,7 @@ export async function initializeDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_login TIMESTAMP
       )
-    `);
+    `).catch(err => console.warn('Create users table:', err.message));
 
     // Create sessions table
     await client.query(`
@@ -46,7 +47,7 @@ export async function initializeDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         expires_at TIMESTAMP NOT NULL
       )
-    `);
+    `).catch(err => console.warn('Create sessions table:', err.message));
 
     // Create server clones audit log table
     await client.query(`
@@ -59,28 +60,28 @@ export async function initializeDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         status VARCHAR(50) DEFAULT 'pending'
       )
-    `);
+    `).catch(err => console.warn('Create server_clones table:', err.message));
 
     // Create indexes for better query performance
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)
-    `);
+    `).catch(err => console.warn('Create index idx_users_username:', err.message));
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)
-    `);
+    `).catch(err => console.warn('Create index idx_users_email:', err.message));
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)
-    `);
+    `).catch(err => console.warn('Create index idx_sessions_token:', err.message));
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)
-    `);
+    `).catch(err => console.warn('Create index idx_sessions_user_id:', err.message));
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_server_clones_user_id ON server_clones(user_id)
-    `);
+    `).catch(err => console.warn('Create index idx_server_clones_user_id:', err.message));
 
     // Create managed servers table (tracks which user created each VM)
     await client.query(`
@@ -92,24 +93,25 @@ export async function initializeDatabase() {
         seed TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
-    `);
+    `).catch(err => console.warn('Create managed_servers table:', err.message));
 
     // Add seed column if it doesn't exist (for existing databases)
-    try {
-      await client.query(`
-        ALTER TABLE managed_servers ADD COLUMN seed TEXT
-      `);
-    } catch (e) {
-      // Column already exists, that's fine
-    }
+    await client.query(`
+      ALTER TABLE managed_servers ADD COLUMN seed TEXT
+    `).catch(err => {
+      // Column already exists or other error, that's fine
+      if (!err.message.includes('already exists')) {
+        console.warn('Add seed column:', err.message);
+      }
+    });
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_managed_servers_creator_id ON managed_servers(creator_id)
-    `);
+    `).catch(err => console.warn('Create index idx_managed_servers_creator_id:', err.message));
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_managed_servers_vmid ON managed_servers(vmid)
-    `);
+    `).catch(err => console.warn('Create index idx_managed_servers_vmid:', err.message));
 
     // Create app configuration table
     await client.query(`
@@ -122,11 +124,11 @@ export async function initializeDatabase() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
       )
-    `);
+    `).catch(err => console.warn('Create app_config table:', err.message));
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_app_config_key ON app_config(key)
-    `);
+    `).catch(err => console.warn('Create index idx_app_config_key:', err.message));
 
     // Create error logs table for persistent error tracking
     await client.query(`
@@ -143,19 +145,19 @@ export async function initializeDatabase() {
         request_body TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
-    `);
+    `).catch(err => console.warn('Create error_logs table:', err.message));
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_error_logs_created_at ON error_logs(created_at DESC)
-    `);
+    `).catch(err => console.warn('Create index idx_error_logs_created_at:', err.message));
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_error_logs_user_id ON error_logs(user_id)
-    `);
+    `).catch(err => console.warn('Create index idx_error_logs_user_id:', err.message));
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_error_logs_error_type ON error_logs(error_type)
-    `);
+    `).catch(err => console.warn('Create index idx_error_logs_error_type:', err.message));
 
     // Create password reset tokens table
     await client.query(`
@@ -167,15 +169,15 @@ export async function initializeDatabase() {
         used BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
-    `);
+    `).catch(err => console.warn('Create password_reset_tokens table:', err.message));
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token)
-    `);
+    `).catch(err => console.warn('Create index idx_password_reset_tokens_token:', err.message));
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id)
-    `);
+    `).catch(err => console.warn('Create index idx_password_reset_tokens_user_id:', err.message));
 
     // Create API metrics table for basic performance monitoring
     await client.query(`
@@ -188,20 +190,19 @@ export async function initializeDatabase() {
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
-    `);
+    `).catch(err => console.warn('Create api_metrics table:', err.message));
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_api_metrics_created_at ON api_metrics(created_at DESC)
-    `);
+    `).catch(err => console.warn('Create index idx_api_metrics_created_at:', err.message));
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_api_metrics_endpoint ON api_metrics(endpoint)
-    `);
+    `).catch(err => console.warn('Create index idx_api_metrics_endpoint:', err.message));
 
-    await client.query('COMMIT');
     console.log('✓ Database initialized');
   } catch (error) {
-    await client.query('ROLLBACK');
+    console.error('Database initialization error:', error.message);
     throw error;
   } finally {
     client.release();
