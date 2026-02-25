@@ -8,8 +8,10 @@ services:
       - POSTGRES_DB=${DB_NAME:-minecraft_manager}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # Port mapping commented out to avoid conflicts with host PostgreSQL
+    # The containers communicate internally via the minecraft-network
+    # ports:
+    #   - "5432:5432"
     networks:
       - minecraft-network
     healthcheck:
