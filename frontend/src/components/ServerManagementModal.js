@@ -359,6 +359,38 @@ function ServerManagementModal({ server, onClose }) {
     }
   };
 
+  const handleUpgradePlugin = async (pluginName) => {
+    if (!window.confirm(`Upgrade plugin ${pluginName} to the latest version? Server restart required to apply.`)) return;
+    
+    setLoading(true);
+    setError('');
+    setSuccess('');
+    
+    try {
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(
+        `${process.env.REACT_APP_API_URL}/api/servers/${server.vmid}/minecraft/plugins/${pluginName}/upgrade`,
+        {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        }
+      );
+      
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to upgrade plugin');
+      }
+
+      const data = await response.json();
+      setSuccess(data.message || 'Plugin upgraded successfully!');
+      setTimeout(() => loadTabData('plugins'), 1500);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const searchRepositoryPlugins = async (query, page = 1) => {
     setPluginSearchLoading(true);
     setError('');
@@ -779,12 +811,22 @@ function ServerManagementModal({ server, onClose }) {
                             <p className="installed-plugin-description">{metadata.description}</p>
                           )}
 
-                          <button 
-                            onClick={() => handleDeletePlugin(plugin)} 
-                            className="delete-btn"
-                          >
-                            🗑 Delete
-                          </button>
+                          <div className="installed-plugin-actions">
+                            <button 
+                              onClick={() => handleUpgradePlugin(plugin)} 
+                              disabled={loading}
+                              className="upgrade-btn"
+                            >
+                              ⬆️ Upgrade
+                            </button>
+                            <button 
+                              onClick={() => handleDeletePlugin(plugin)} 
+                              disabled={loading}
+                              className="delete-btn"
+                            >
+                              🗑 Delete
+                            </button>
+                          </div>
                         </div>
                       );
                     })}

@@ -996,7 +996,37 @@ body {
   overflow: hidden;
 }
 
+.installed-plugin-actions {
+  display: flex;
+  gap: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #2a2e35;
+}
+
+.installed-plugin-card .upgrade-btn {
+  flex: 1;
+  background-color: #5cb85c;
+  color: #fff;
+  border: none;
+  padding: 0.6rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  transition: background-color 0.2s;
+}
+
+.installed-plugin-card .upgrade-btn:hover:not(:disabled) {
+  background-color: #4cae4c;
+}
+
+.installed-plugin-card .upgrade-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .installed-plugin-card .delete-btn {
+  flex: 1;
   background-color: #d9534f;
   color: #fff;
   border: none;
@@ -1010,6 +1040,11 @@ body {
 
 .installed-plugin-card .delete-btn:hover:not(:disabled) {
   background-color: #c9302c;
+}
+
+.installed-plugin-card .delete-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Alternative Install Section */

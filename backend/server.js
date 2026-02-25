@@ -1495,6 +1495,29 @@ async function startServer() {
       }
     });
 
+    // Upgrade an installed plugin to the latest version
+    app.post('/api/servers/:vmid/minecraft/plugins/:pluginName/upgrade', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const pluginName = req.params.pluginName;
+        
+        // Check permissions - admin or creator only
+        const creatorId = await ManagedServer.getCreator(vmid);
+        if (req.user.role !== 'admin' && creatorId !== req.user.userId) {
+          return res.status(403).json({ error: 'Only admins or server creators can upgrade plugins' });
+        }
+
+        console.log(`⬆️ Upgrading plugin ${pluginName} on server ${vmid}`);
+        const manager = await getMinecraftManager(vmid);
+        const result = await manager.upgradePlugin(pluginName);
+        
+        res.json(result);
+      } catch (error) {
+        console.error('❌ Error upgrading plugin:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Get available plugins from PaperMC repository
     app.get('/api/minecraft/plugins/repository', verifyToken, async (req, res) => {
       try {

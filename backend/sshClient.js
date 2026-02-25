@@ -606,6 +606,13 @@ export class MinecraftServerManager {
   }
 
   /**
+   * Upgrade an installed plugin to the latest version
+   */
+  async upgradePlugin(pluginName) {
+    return this.ssh.upgradePlugin(pluginName);
+  }
+
+  /**
    * Get server logs (last N lines)
    */
   async getLogs(lines = 100) {
@@ -653,11 +660,32 @@ export class MinecraftServerManager {
    */
   async getPaperMCVersion() {
     try {
-      const command = `ls -1 ${this.minecraftPath}/paper*.jar 2>/dev/null | head -1 | xargs -I {} basename {} | sed 's/paper-//' | sed 's/.jar//'`;
-      const result = await this.runAsMinecraft(command);
-      if (result.code === 0 && result.stdout.trim()) {
-        return result.stdout.trim();
+      // First check if server.jar is a symlink and follow it
+      const symlinkCmd = `[ -L ${this.minecraftPath}/server.jar ] && readlink ${this.minecraftPath}/server.jar || echo ''`;
+      const symlinkResult = await this.runAsMinecraft(symlinkCmd);
+      
+      let jarFile = symlinkResult.stdout.trim();
+      
+      // If server.jar is a symlink, use the target; otherwise look for paper jars
+      if (!jarFile) {
+        const command = `ls -1 ${this.minecraftPath}/paper*.jar 2>/dev/null | head -1 | xargs -I {} basename {}`;
+        const result = await this.runAsMinecraft(command);
+        if (result.code === 0 && result.stdout.trim()) {
+          jarFile = result.stdout.trim();
+        }
+      } else {
+        // Extract just the filename if it's a full path
+        jarFile = jarFile.split('/').pop();
       }
+      
+      // Extract version from jar name (paper-1.21.4-123.jar -> 1.21.4)
+      if (jarFile) {
+        const match = jarFile.match(/paper-(.*?)-(\\d+)\\.jar/);
+        if (match) {
+          return match[1]; // Return just the version number
+        }
+      }
+      
       return null;
     } catch (error) {
       console.error('Error getting PaperMC version:', error);
@@ -667,21 +695,32 @@ export class MinecraftServerManager {
 
   /**
    * Update PaperMC to a specific version
-   * @param {string} version - Version to update to (e.g., "1.21.4" or "latest")
+   * @param {string} version - Version to update to (e.g., "1.21.4")
    */
   async updatePaperMC(version) {
     try {
       console.log(`📥 Starting PaperMC update to version: ${version}`);
 
-      // First, backup current jar if it exists
-      const backupCmd = `[ -f ${this.minecraftPath}/paper*.jar ] && mv ${this.minecraftPath}/paper*.jar ${this.minecraftPath}/paper.jar.bak`;
-      await this.runAsMinecraft(backupCmd);
+      // Get the current jar info to see if we're using a symlink
+      const symlinkCmd = `[ -L ${this.minecraftPath}/server.jar ] && readlink ${this.minecraftPath}/server.jar || echo ''`;
+      const symlinkResult = await this.runAsMinecraft(symlinkCmd);
+      const currentTarget = symlinkResult.stdout.trim();
+
+      // Fetch available builds for the version from PaperMC API
+      const versionListRes = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}`);
+      if (!versionListRes.ok) {
+        throw new Error(`Version ${version} not found in PaperMC`);
+      }
+      const versionData = await versionListRes.json();
+      const latestBuild = versionData.builds[versionData.builds.length - 1];
+
+      // Construct the jar name
+      const jarName = `paper-${version}-${latestBuild}.jar`;
+      const jarPath = `${this.minecraftPath}/${jarName}`;
 
       // Download the new version
-      // PaperMC API: https://papermc.io/api/v2/projects/paper
-      const downloadUrl = `https://api.papermc.io/v2/projects/paper/versions/${version}/builds/${version.includes('latest') ? '0' : 'latest'}/downloads/paper-${version}-latest.jar`;
-      
-      const downloadCmd = `cd ${this.minecraftPath} && curl -o paper-${version}.jar ${downloadUrl}`;
+      const downloadUrl = `https://api.papermc.io/v2/projects/paper/versions/${version}/builds/${latestBuild}/downloads/${jarName}`;
+      const downloadCmd = `cd ${this.minecraftPath} && curl -L -o ${jarName} ${downloadUrl}`;
       const downloadResult = await this.runAsMinecraft(downloadCmd);
 
       if (downloadResult.code !== 0) {
@@ -689,19 +728,76 @@ export class MinecraftServerManager {
       }
 
       console.log(`✓ Downloaded PaperMC version ${version}`);
+
+      // If server.jar is a symlink, update it; otherwise create one
+      if (currentTarget) {
+        // Update the symlink to point to the new jar
+        const updateSymlinkCmd = `rm ${this.minecraftPath}/server.jar && ln -s ${jarPath} ${this.minecraftPath}/server.jar`;
+        await this.runAsMinecraft(updateSymlinkCmd);
+        console.log(`✓ Updated symlink to point to ${jarName}`);
+      } else {
+        // Create a symlink
+        const createSymlinkCmd = `ln -s ${jarPath} ${this.minecraftPath}/server.jar`;
+        await this.runAsMinecraft(createSymlinkCmd);
+        console.log(`✓ Created symlink to ${jarName}`);
+      }
+
       return {
         success: true,
         version,
-        message: `Successfully updated to PaperMC ${version}`
+        jarName,
+        message: `Successfully updated to PaperMC ${version}. Restart server to apply changes.`
       };
     } catch (error) {
       console.error('❌ Error updating PaperMC:', error);
-      // Try to restore backup
-      try {
-        await this.runAsMinecraft(`[ -f ${this.minecraftPath}/paper.jar.bak ] && mv ${this.minecraftPath}/paper.jar.bak ${this.minecraftPath}/paper*.jar`);
-      } catch (restoreError) {
-        console.error('Error restoring backup:', restoreError);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Upgrade an installed plugin to the latest version
+   * @param {string} pluginName - Name of the plugin file (e.g., "EssentialsX.jar")
+   */
+  async upgradePlugin(pluginName) {
+    try {
+      console.log(`📦 Upgrading plugin: ${pluginName}`);
+
+      // Extract plugin slug from jar name
+      const slug = pluginName.toLowerCase().replace(/\.jar$/, '').replace(/ /g, '-');
+      const downloadUrl = `https://hangar.papermc.io/api/v1/projects/${slug}/latest/download`;
+      
+      const tempPath = `/tmp/${pluginName}`;
+      const downloadCmd = `curl -L -o ${tempPath} ${downloadUrl}`;
+      
+      const downloadResult = await this.runAsMinecraft(downloadCmd);
+      
+      if (downloadResult.code !== 0) {
+        throw new Error(`Failed to download latest version of ${pluginName}`);
       }
+
+      // Backup old plugin
+      const backupCmd = `cp ${this.minecraftPath}/plugins/${pluginName} ${this.minecraftPath}/plugins/${pluginName}.bak`;
+      await this.runAsMinecraft(backupCmd);
+
+      // Move new plugin to plugins directory
+      const moveCmd = `mv ${tempPath} ${this.minecraftPath}/plugins/${pluginName}`;
+      const moveResult = await this.runAsMinecraft(moveCmd);
+      
+      if (moveResult.code !== 0) {
+        throw new Error(`Failed to update ${pluginName}`);
+      }
+
+      console.log(`✓ Successfully upgraded ${pluginName}`);
+      return {
+        success: true,
+        pluginName,
+        message: `Successfully upgraded ${pluginName}. Restart server to load the new version.`
+      };
+    } catch (error) {
+      console.error('❌ Error upgrading plugin:', error);
       return {
         success: false,
         error: error.message
