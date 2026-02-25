@@ -1526,13 +1526,19 @@ async function startServer() {
           url: `https://hangar.papermc.io/${plugin.owner}/${plugin.slug}`
         }));
 
+        const page = parseInt(req.query.page) || 1;
+        const total = data.pagination?.totalSize || 0;
+        const totalPages = Math.ceil(total / limit);
+        
         res.json({
           plugins,
           pagination: {
-            page: parseInt(req.query.page) || 1,
+            page,
             limit,
-            total: data.pagination?.totalSize || plugins.length
-          }
+            total,
+            totalPages: Math.max(1, totalPages)
+          },
+          totalPages: Math.max(1, totalPages)
         });
       } catch (error) {
         console.error('❌ Error fetching plugins from repository:', error);
@@ -1543,10 +1549,13 @@ async function startServer() {
     // Get popular/trending plugins from PaperMC repository
     app.get('/api/minecraft/plugins/popular', verifyToken, async (req, res) => {
       try {
-        console.log('🔍 Fetching popular PaperMC plugins...');
+        const page = parseInt(req.query.page) || 1;
+        console.log(`🔍 Fetching popular PaperMC plugins (page ${page})...`);
 
-        // Fetch popular plugins sorted by downloads
-        const response = await fetch('https://hangar.papermc.io/api/v1/projects?limit=20&offset=0&sort=downloads');
+        // Fetch popular plugins sorted by downloads with pagination
+        const limit = 20;
+        const offset = (page - 1) * limit;
+        const response = await fetch(`https://hangar.papermc.io/api/v1/projects?limit=${limit}&offset=${offset}&sort=downloads`);
         
         if (!response.ok) {
           throw new Error(`Failed to fetch from Hangar API: ${response.statusText}`);
@@ -1565,7 +1574,20 @@ async function startServer() {
           url: `https://hangar.papermc.io/${plugin.owner}/${plugin.slug}`
         }));
 
-        res.json({ plugins });
+        // Calculate total pages based on pagination info from Hangar
+        const total = data.pagination?.totalSize || 0;
+        const totalPages = Math.ceil(total / limit);
+
+        res.json({ 
+          plugins,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.max(1, totalPages)
+          },
+          totalPages: Math.max(1, totalPages)
+        });
       } catch (error) {
         console.error('❌ Error fetching popular plugins:', error);
         res.status(500).json({ error: error.message });

@@ -22,6 +22,8 @@ function ServerManagementModal({ server, onClose }) {
   const [popularPlugins, setPopularPlugins] = useState([]);
   const [pluginSearchQuery, setPluginSearchQuery] = useState('');
   const [pluginSearchPage, setPluginSearchPage] = useState(1);
+  const [pluginSearchTotalPages, setPluginSearchTotalPages] = useState(1);
+  const [popularPluginsPage, setPopularPluginsPage] = useState(1);
   const [pluginSearchLoading, setPluginSearchLoading] = useState(false);
   const [pluginMetadata, setPluginMetadata] = useState({});
 
@@ -123,10 +125,10 @@ function ServerManagementModal({ server, onClose }) {
             setPluginMetadata(metadata);
           }
 
-          // Load popular plugins
+          // Load popular plugins (paginated)
           try {
             const popularRes = await fetch(
-              `${process.env.REACT_APP_API_URL}/api/minecraft/plugins/popular`,
+              `${process.env.REACT_APP_API_URL}/api/minecraft/plugins/popular?page=${popularPluginsPage}`,
               { headers: { 'Authorization': `Bearer ${token}` } }
             );
             if (popularRes.ok) {
@@ -378,8 +380,29 @@ function ServerManagementModal({ server, onClose }) {
       const data = await response.json();
       setRepositoryPlugins(data.plugins);
       setPluginSearchPage(page);
+      setPluginSearchTotalPages(data.totalPages || 1);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setPluginSearchLoading(false);
+    }
+  };
+
+  const handlePopularPluginsPageChange = async (newPage) => {
+    setPluginSearchLoading(true);
+    try {
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(
+        `${process.env.REACT_APP_API_URL}/api/minecraft/plugins/popular?page=${newPage}`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setPopularPlugins(data.plugins);
+        setPopularPluginsPage(newPage);
+      }
+    } catch (err) {
+      console.error('Failed to load popular plugins page:', err);
     } finally {
       setPluginSearchLoading(false);
     }
@@ -592,53 +615,161 @@ function ServerManagementModal({ server, onClose }) {
           
           {activeTab === 'plugins' && (
             <div className="plugins-tab">
-              <div className="plugin-install">
-                <h3>Install Plugin from Repository</h3>
-                
-                <div className="repo-search">
-                  <input
-                    type="text"
-                    placeholder="Search PaperMC plugins (e.g., EssentialsX, WorldEdit)..."
-                    value={pluginSearchQuery}
-                    onChange={(e) => setPluginSearchQuery(e.target.value)}
-                  />
-                  <button 
-                    onClick={() => searchRepositoryPlugins(pluginSearchQuery)}
-                    disabled={pluginSearchLoading || !pluginSearchQuery}
-                  >
-                    {pluginSearchLoading ? '🔍 Searching...' : '🔍 Search'}
-                  </button>
+              {/* Plugin Browser Section */}
+              <div className="plugin-browser">
+                <div className="plugin-browser-header">
+                  <h3>Browse Plugins</h3>
+                  <p className="plugin-browser-subtitle">Find and install plugins from PaperMC Hangar</p>
                 </div>
 
-                {(repositoryPlugins.length > 0 || popularPlugins.length > 0) && (
-                  <div className="repo-results">
-                    <h4>{repositoryPlugins.length > 0 ? 'Search Results' : 'Popular Plugins'} ({(repositoryPlugins.length || popularPlugins.length)})</h4>
-                    <div className="plugin-list">
+                <div className="plugin-search-section">
+                  <div className="repo-search">
+                    <input
+                      type="text"
+                      placeholder="Search PaperMC plugins (e.g., EssentialsX, WorldEdit)..."
+                      value={pluginSearchQuery}
+                      onChange={(e) => setPluginSearchQuery(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && searchRepositoryPlugins(pluginSearchQuery)}
+                    />
+                    <button 
+                      onClick={() => {
+                        setPluginSearchPage(1);
+                        searchRepositoryPlugins(pluginSearchQuery, 1);
+                      }}
+                      disabled={pluginSearchLoading || !pluginSearchQuery}
+                    >
+                      {pluginSearchLoading ? '🔍 Searching...' : '🔍 Search'}
+                    </button>
+                  </div>
+                </div>
+
+                {(repositoryPlugins.length > 0 || popularPlugins.length > 0 || !pluginSearchQuery) && (
+                  <div className="plugin-results-container">
+                    <div className="plugin-results-header">
+                      <h4>
+                        {repositoryPlugins.length > 0 
+                          ? `Search Results (${repositoryPlugins.length})` 
+                          : 'Popular Plugins'}
+                      </h4>
+                    </div>
+                    
+                    <div className="plugin-grid">
                       {(repositoryPlugins.length > 0 ? repositoryPlugins : popularPlugins).map((plugin) => (
-                        <div key={plugin.slug} className="plugin-item">
-                          {plugin.icon && (
-                            <img src={plugin.icon} alt={plugin.name} className="plugin-icon" />
-                          )}
-                          <div className="plugin-info">
-                            <h5>{plugin.name}</h5>
-                            <p className="plugin-desc">{plugin.description}</p>
-                            <p className="plugin-meta">by {plugin.author} • {plugin.downloads?.toLocaleString()} downloads</p>
+                        <div key={plugin.slug} className="plugin-card">
+                          <div className="plugin-card-header">
+                            {plugin.icon && (
+                              <img src={plugin.icon} alt={plugin.name} className="plugin-card-icon" />
+                            )}
+                            <div className="plugin-card-title-section">
+                              <h5 className="plugin-card-title">{plugin.name}</h5>
+                              <p className="plugin-card-author">by {plugin.author}</p>
+                            </div>
                           </div>
-                          <button 
-                            onClick={() => installPluginFromRepository(plugin.slug)}
-                            disabled={loading}
-                            className="install-btn"
-                          >
-                            {loading ? 'Installing...' : 'Install'}
-                          </button>
+
+                          <p className="plugin-card-description">{plugin.description}</p>
+
+                          <div className="plugin-card-footer">
+                            <div className="plugin-stats">
+                              <span className="stat-item">
+                                📥 {plugin.downloads?.toLocaleString() || 0}
+                              </span>
+                            </div>
+                            <button 
+                              onClick={() => installPluginFromRepository(plugin.slug)}
+                              disabled={loading}
+                              className="install-btn"
+                            >
+                              {loading ? 'Installing...' : 'Install'}
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
+
+                    {/* Pagination */}
+                    {(repositoryPlugins.length > 0 || popularPlugins.length > 0) && (
+                      <div className="pagination-container">
+                        <button 
+                          className="pagination-btn"
+                          onClick={() => {
+                            if (repositoryPlugins.length > 0) {
+                              if (pluginSearchPage > 1) searchRepositoryPlugins(pluginSearchQuery, pluginSearchPage - 1);
+                            } else {
+                              if (popularPluginsPage > 1) handlePopularPluginsPageChange(popularPluginsPage - 1);
+                            }
+                          }}
+                          disabled={pluginSearchLoading || (repositoryPlugins.length > 0 ? pluginSearchPage === 1 : popularPluginsPage === 1)}
+                        >
+                          ← Previous
+                        </button>
+                        
+                        <span className="page-indicator">
+                          Page {repositoryPlugins.length > 0 ? pluginSearchPage : popularPluginsPage}
+                        </span>
+                        
+                        <button 
+                          className="pagination-btn"
+                          onClick={() => {
+                            if (repositoryPlugins.length > 0) {
+                              if (pluginSearchPage < pluginSearchTotalPages) searchRepositoryPlugins(pluginSearchQuery, pluginSearchPage + 1);
+                            } else {
+                              handlePopularPluginsPageChange(popularPluginsPage + 1);
+                            }
+                          }}
+                          disabled={pluginSearchLoading || (repositoryPlugins.length > 0 && pluginSearchPage >= pluginSearchTotalPages)}
+                        >
+                          Next →
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
 
-              <div className="alternate-install" style={{ marginTop: '2rem', paddingTop: '2rem', borderTop: '1px solid #333' }}>
+              {/* Installed Plugins Section */}
+              <div className="installed-plugins-section">
+                <h3>Installed Plugins ({plugins.length})</h3>
+                {plugins.length === 0 ? (
+                  <div className="no-plugins">
+                    <p>No plugins installed yet</p>
+                  </div>
+                ) : (
+                  <div className="installed-plugin-grid">
+                    {plugins.map((plugin) => {
+                      const metadata = pluginMetadata[plugin];
+                      return (
+                        <div key={plugin} className="installed-plugin-card">
+                          <div className="installed-plugin-header">
+                            {metadata?.icon && (
+                              <img src={metadata.icon} alt={plugin} className="installed-plugin-icon" />
+                            )}
+                            <div className="installed-plugin-title-section">
+                              <h5 className="installed-plugin-name">{plugin}</h5>
+                              {metadata?.author && (
+                                <p className="installed-plugin-author">by {metadata.author}</p>
+                              )}
+                            </div>
+                          </div>
+
+                          {metadata?.description && (
+                            <p className="installed-plugin-description">{metadata.description}</p>
+                          )}
+
+                          <button 
+                            onClick={() => handleDeletePlugin(plugin)} 
+                            className="delete-btn"
+                          >
+                            🗑 Delete
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Alternative Installation Methods */}
+              <div className="alternative-install">
                 <h3>Alternative Installation Methods</h3>
                 
                 <div className="install-from-url">
@@ -671,34 +802,6 @@ function ServerManagementModal({ server, onClose }) {
                     Upload Plugin
                   </button>
                 </div>
-              </div>
-              
-              <div className="installed-plugins">
-                <h3>Installed Plugins ({plugins.length})</h3>
-                <ul className="installed-plugins-list">
-                  {plugins.map((plugin) => {
-                    const metadata = pluginMetadata[plugin];
-                    return (
-                      <li key={plugin} className="installed-plugin-item">
-                        <div className="plugin-content">
-                          {metadata?.icon && (
-                            <img src={metadata.icon} alt={plugin} className="plugin-icon-small" />
-                          )}
-                          <div className="plugin-details">
-                            <span className="plugin-name">{plugin}</span>
-                            {metadata?.description && (
-                              <span className="plugin-description">{metadata.description}</span>
-                            )}
-                            {metadata?.author && (
-                              <span className="plugin-author">by {metadata.author}</span>
-                            )}
-                          </div>
-                        </div>
-                        <button onClick={() => handleDeletePlugin(plugin)} className="delete-btn">Delete</button>
-                      </li>
-                    );
-                  })}
-                </ul>
               </div>
             </div>
           )}
