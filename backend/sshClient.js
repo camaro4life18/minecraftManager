@@ -787,15 +787,16 @@ export class MinecraftServerManager {
       console.log(`🔍 Plugin slug extraction: ${pluginName} -> ${slug}`);
       const downloadUrl = `https://hangar.papermc.io/api/v1/projects/${slug}/latest/download`;
       
-      const tempPath = `/tmp/${pluginName}`;
-      const downloadCmd = `curl -L -o ${tempPath} ${downloadUrl} 2>&1`;
+      // Use minecraft directory for temp file since /tmp may not be writable
+      const tempPath = `${this.minecraftPath}/temp-${Date.now()}-${pluginName}`;
+      const downloadCmd = `curl -L -f -o ${tempPath} ${downloadUrl}`;
       
       const downloadResult = await this.runAsMinecraft(downloadCmd);
       
-      console.log(`📥 Download result - code: ${downloadResult.code}, stderr: ${downloadResult.stderr}`);
+      console.log(`📥 Download result - code: ${downloadResult.code}, stderr: '${downloadResult.stderr}', stdout: '${downloadResult.stdout}'`);
       
       if (downloadResult.code !== 0) {
-        throw new Error(`Failed to download latest version of ${pluginName}: ${downloadResult.stderr}`);
+        throw new Error(`Failed to download latest version of ${pluginName}: curl exit ${downloadResult.code}`);
       }
 
       // Backup old plugin
