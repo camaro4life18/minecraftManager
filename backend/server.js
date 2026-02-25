@@ -1753,6 +1753,15 @@ async function startServer() {
       try {
         console.log('🔍 Fetching available PaperMC versions...');
 
+        // Known latest builds when API is outdated (fallback data)
+        const knownLatestBuilds = {
+          '1.21.11': 117,
+          '1.21.10': 129,
+          '1.21.4': 232,
+          '1.21.1': 133,
+          '1.21.5': 114
+        };
+
         // Fetch from PaperMC API
         const response = await fetch('https://api.papermc.io/v2/projects/paper');
         
@@ -1777,12 +1786,15 @@ async function startServer() {
 
         // Map version numbers to their latest builds
         const versionsWithBuilds = versionNumbers.map(version => {
-          const build = versionBuildMap[version];
+          // Use known latest builds if available, otherwise use API data
+          let build = knownLatestBuilds[version] || versionBuildMap[version];
+          
           if (build) {
-            console.log(`✓ Version ${version}: Latest build = ${build} (from version_group)`);
+            const source = knownLatestBuilds[version] ? 'known latest' : 'version_group';
+            console.log(`✓ Version ${version}: Latest build = ${build} (from ${source})`);
             return { version, build };
           } else {
-            console.log(`⚠️  Version ${version}: No build found in version_group`);
+            console.log(`⚠️  Version ${version}: No build found`);
             return { version, build: null };
           }
         });
