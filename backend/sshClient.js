@@ -775,11 +775,11 @@ export class MinecraftServerManager {
       // Remove .jar extension
       let slug = pluginName.replace(/\.jar$/i, '');
       
-      // Remove platform suffixes (Bukkit, Paper, Spigot, etc.)
-      slug = slug.replace(/-?(Bukkit|Paper|Spigot|Sponge|Velocity|Waterfall)$/i, '');
+      // Remove version patterns FIRST (e.g., -1, -1.2.3, -2.0.0-dev+30-abc123, _v1.0, etc.)
+      slug = slug.replace(/[-_]?(v?\d+[\d\.\-+\w]*)?$/i, '');
       
-      // Remove version patterns (e.g., -1.2.3, -2.0.0-dev+30-abc123, _v1.0, etc.)
-      slug = slug.replace(/[-_]?(v?\d+[\d\.\-+]+[\w\-+]*)$/i, '');
+      // Then remove platform suffixes (Bukkit, Paper, Spigot, etc.) at the end
+      slug = slug.replace(/-?(Bukkit|Paper|Spigot|Sponge|Velocity|Waterfall)$/i, '');
       
       // Normalize to lowercase and replace spaces/underscores with hyphens
       slug = slug.toLowerCase().replace(/[_\s]+/g, '-');
@@ -789,15 +789,26 @@ export class MinecraftServerManager {
       
       // Use minecraft directory for temp file since /tmp may not be writable
       const tempPath = `${this.minecraftPath}/temp-${Date.now()}-${pluginName}`;
-      const downloadCmd = `curl -L -f -o ${tempPath} ${downloadUrl}`;
+      // Use -w to capture HTTP status code, -v for verbose (redirected to stderr), -f to fail on HTTP error
+      const downloadCmd = `curl -L -f -w "\\nHTTP_STATUS:%{http_code}\\n" -o ${tempPath} ${downloadUrl}`;
       
+      console.log(`📥 Starting download from: ${downloadUrl}`);
       const downloadResult = await this.runAsMinecraft(downloadCmd);
       
-      console.log(`📥 Download result - code: ${downloadResult.code}, stderr: '${downloadResult.stderr}', stdout: '${downloadResult.stdout}'`);
+      console.log(`📥 Full curl output - code: ${downloadResult.code}`);
+      console.log(`📥 stdout: "${downloadResult.stdout}"`);
+      console.log(`📥 stderr: "${downloadResult.stderr}"`);
       
       if (downloadResult.code !== 0) {
-        throw new Error(`Failed to download latest version of ${pluginName}: curl exit ${downloadResult.code}`);
+        throw new Error(`Failed to download latest version of ${pluginName}: curl exit ${downloadResult.code}. stderr: ${downloadResult.stderr}`);
       }
+      
+      // Check if file was created
+      const statResult = await this.runAsMinecraft(`ls -lh ${tempPath}`);
+      if (statResult.code !== 0) {
+        throw new Error(`Download completed but file not found at ${tempPath}`);
+      }
+      console.log(`📥 Downloaded file: ${statResult.stdout.trim()}`);
 
       // Backup old plugin
       const backupCmd = `cp ${this.minecraftPath}/plugins/${pluginName} ${this.minecraftPath}/plugins/${pluginName}.bak`;
