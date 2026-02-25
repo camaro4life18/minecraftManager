@@ -788,12 +788,14 @@ export class MinecraftServerManager {
       const downloadUrl = `https://hangar.papermc.io/api/v1/projects/${slug}/latest/download`;
       
       const tempPath = `/tmp/${pluginName}`;
-      const downloadCmd = `curl -L -o ${tempPath} ${downloadUrl}`;
+      const downloadCmd = `curl -L -o ${tempPath} ${downloadUrl} 2>&1`;
       
       const downloadResult = await this.runAsMinecraft(downloadCmd);
       
+      console.log(`📥 Download result - code: ${downloadResult.code}, stderr: ${downloadResult.stderr}`);
+      
       if (downloadResult.code !== 0) {
-        throw new Error(`Failed to download latest version of ${pluginName}`);
+        throw new Error(`Failed to download latest version of ${pluginName}: ${downloadResult.stderr}`);
       }
 
       // Backup old plugin
