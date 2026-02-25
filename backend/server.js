@@ -1275,7 +1275,8 @@ async function startServer() {
           host: sshConfig.ssh_host,
           port: sshConfig.ssh_port,
           username: sshConfig.ssh_username,
-          minecraftPath: sshConfig.minecraft_path
+          minecraftPath: sshConfig.minecraft_path,
+          minecraftUser: sshConfig.minecraft_user || 'minecraft'
         });
       } catch (error) {
         res.status(500).json({ error: error.message });
