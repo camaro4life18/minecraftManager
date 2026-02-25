@@ -31,6 +31,20 @@ class ProxmoxClient {
     }
   }
 
+  // Get all nodes
+  async getNodes() {
+    if (!this.token) {
+      await this.authenticate();
+    }
+
+    try {
+      const response = await this.api.get('/nodes');
+      return response.data.data || [];
+    } catch (error) {
+      throw new Error(`Failed to fetch nodes: ${error.message}`);
+    }
+  }
+
   // Get all servers (LXC and QEMU)
   async getServers() {
     if (!this.token) {
