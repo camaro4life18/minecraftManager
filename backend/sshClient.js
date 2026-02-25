@@ -508,9 +508,20 @@ export class MinecraftServerManager {
    */
   async getVersion() {
     try {
-      // Try to read version from server jar - run as minecraft user
+      // First check if server.jar exists and is a symlink
+      const checkSymlink = `[ -L ${this.minecraftPath}/server.jar ] && readlink -f ${this.minecraftPath}/server.jar || echo ''`;
+      const symlinkResult = await this.runAsMinecraft(checkSymlink);
+      
+      let jarPath = symlinkResult.stdout.trim();
+      
+      // If server.jar is a symlink, extract the filename from the target path
+      if (jarPath) {
+        return jarPath.split('/').pop();
+      }
+      
+      // Otherwise, look for jar files directly
       const result = await this.runAsMinecraft(
-        `cd ${this.minecraftPath} && (ls -1 minecraft_server*.jar 2>/dev/null || ls -1 server*.jar 2>/dev/null || ls -1 spigot*.jar 2>/dev/null || ls -1 paper*.jar 2>/dev/null || echo 'unknown')`
+        `cd ${this.minecraftPath} && (ls -1 minecraft_server*.jar 2>/dev/null || ls -1 server.jar 2>/dev/null || ls -1 spigot*.jar 2>/dev/null || ls -1 paper*.jar 2>/dev/null || echo 'unknown')`
       );
       return result.stdout.trim() || 'unknown';
     } catch (error) {
