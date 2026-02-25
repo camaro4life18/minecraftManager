@@ -24,13 +24,21 @@ function AddServerModal({ isOpen, onClose, onAdd, apiBase }) {
       });
 
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.message || 'Failed to fetch available servers');
+        let errorMessage = 'Failed to fetch available servers';
+        try {
+          const data = await response.json();
+          errorMessage = data.message || data.error || errorMessage;
+        } catch (parseError) {
+          // Response wasn't JSON, use status text
+          errorMessage = `Server error: ${response.status} ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
       setAvailableServers(data.servers || []);
     } catch (err) {
+      console.error('Error fetching available servers:', err);
       setError(err.message);
     } finally {
       setLoading(false);

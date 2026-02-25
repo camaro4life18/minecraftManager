@@ -727,18 +727,27 @@ async function startServer() {
     // Get available servers from Proxmox (for adding to managed list) - protected
     app.get('/api/proxmox/available-servers', verifyToken, async (req, res) => {
       try {
+        console.log('📋 Request to fetch available servers from Proxmox...');
+        
         // Check if user is admin
         if (req.user.role !== 'admin') {
+          console.log('❌ Non-admin user attempted to access available servers');
           return res.status(403).json({ error: 'Only admins can view available servers' });
         }
 
+        console.log('✓ Admin check passed');
+
         // Load Proxmox config from database
+        console.log('📋 Loading Proxmox config from database...');
         const proxmoxHost = await AppConfig.get('proxmox_host');
         const proxmoxUsername = await AppConfig.get('proxmox_username');
         const proxmoxPassword = await AppConfig.get('proxmox_password');
         const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
 
+        console.log(`📋 Proxmox config loaded: host=${proxmoxHost}, user=${proxmoxUsername}, realm=${proxmoxRealm}`);
+
         if (!proxmoxHost || !proxmoxUsername || !proxmoxPassword) {
+          console.log('❌ Proxmox not configured properly');
           return res.status(400).json({ 
             error: 'Proxmox not configured',
             message: 'Please configure Proxmox credentials in Admin Settings → Configuration'
@@ -758,16 +767,21 @@ async function startServer() {
 
         try {
           if (!currentProxmox.token) {
+            console.log('🔐 Authenticating with Proxmox...');
             await currentProxmox.authenticate();
+            console.log('✓ Authenticated successfully');
           }
 
           const response = await currentProxmox.api.get('/nodes');
           const nodes = response.data.data;
+          console.log(`✓ Found ${nodes.length} Proxmox nodes`);
 
           for (const node of nodes) {
+            console.log(`📋 Fetching VMs and containers from node: ${node.node}`);
             // Get QEMU VMs
             const vmsResponse = await currentProxmox.api.get(`/nodes/${node.node}/qemu`);
             const vms = vmsResponse.data.data || [];
+            console.log(`  ✓ Found ${vms.length} QEMU VMs`);
             allServers.push(...vms.map(vm => ({
               vmid: vm.vmid,
               name: vm.name,
@@ -779,15 +793,17 @@ async function startServer() {
             // Get LXC containers
             const lxcResponse = await currentProxmox.api.get(`/nodes/${node.node}/lxc`);
             const lxcs = lxcResponse.data.data || [];
+            console.log(`  ✓ Found ${lxcs.length} LXC containers`);
             allServers.push(...lxcs.map(lxc => ({
               vmid: lxc.vmid,
-              name: lxc.hostname,
+              name: lxc.hostname || lxc.name,
               type: 'lxc',
               node: node.node,
               status: lxc.status
             })));
           }
         } catch (error) {
+          console.error('❌ Error fetching from Proxmox:', error);
           return res.status(500).json({ 
             error: 'Failed to fetch servers from Proxmox',
             message: error.message 
@@ -795,6 +811,7 @@ async function startServer() {
         }
 
         // Get already managed server IDs
+        console.log('📋 Checking already managed servers...');
         const managedResult = await pool.query('SELECT vmid FROM managed_servers');
         const managedVmids = new Set(managedResult.rows.map(r => r.vmid));
 
@@ -805,7 +822,8 @@ async function startServer() {
         res.json({ servers: availableServers });
       } catch (error) {
         console.error('❌ Error fetching available servers:', error);
-        res.status(500).json({ error: error.message });
+        console.error('Stack trace:', error.stack);
+        res.status(500).json({ error: error.message || 'Internal server error' });
       }
     });
 
