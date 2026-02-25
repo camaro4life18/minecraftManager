@@ -46,7 +46,12 @@ function SSHConfigModal({ server, onClose, onSuccess }) {
 
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.error || 'Failed to generate SSH keys');
+        let errorMsg = data.error || 'Failed to generate SSH keys';
+        // Add helpful hint for DNS errors
+        if (errorMsg.includes('getaddrinfo') || errorMsg.includes('EAI_AGAIN')) {
+          errorMsg += '. Try using an IP address instead of a hostname.';
+        }
+        throw new Error(errorMsg);
       }
 
       const data = await response.json();
@@ -141,6 +146,16 @@ function SSHConfigModal({ server, onClose, onSuccess }) {
             <p style={{ marginBottom: '1rem', color: '#999' }}>
               Generate SSH keys directly on your Minecraft server using temporary credentials.
             </p>
+            <div style={{ 
+              backgroundColor: '#2d2d30', 
+              border: '1px solid #007acc', 
+              borderRadius: '4px', 
+              padding: '0.75rem', 
+              marginBottom: '1rem',
+              fontSize: '0.9rem'
+            }}>
+              <strong>💡 Tip:</strong> Use the IP address (e.g., 192.168.1.234) instead of hostname for the Server Host field.
+            </div>
 
             <div className="form-group">
               <label>Server Host:</label>
