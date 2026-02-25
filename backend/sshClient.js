@@ -647,6 +647,114 @@ export class MinecraftServerManager {
     const result = await this.ssh.executeCommand(commands.join(' && '));
     return result.stdout;
   }
+
+  /**
+   * Get PaperMC version
+   */
+  async getPaperMCVersion() {
+    try {
+      const command = `ls -1 ${this.minecraftPath}/paper*.jar 2>/dev/null | head -1 | xargs -I {} basename {} | sed 's/paper-//' | sed 's/.jar//'`;
+      const result = await this.runAsMinecraft(command);
+      if (result.code === 0 && result.stdout.trim()) {
+        return result.stdout.trim();
+      }
+      return null;
+    } catch (error) {
+      console.error('Error getting PaperMC version:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Update PaperMC to a specific version
+   * @param {string} version - Version to update to (e.g., "1.21.4" or "latest")
+   */
+  async updatePaperMC(version) {
+    try {
+      console.log(`📥 Starting PaperMC update to version: ${version}`);
+
+      // First, backup current jar if it exists
+      const backupCmd = `[ -f ${this.minecraftPath}/paper*.jar ] && mv ${this.minecraftPath}/paper*.jar ${this.minecraftPath}/paper.jar.bak`;
+      await this.runAsMinecraft(backupCmd);
+
+      // Download the new version
+      // PaperMC API: https://papermc.io/api/v2/projects/paper
+      const downloadUrl = `https://api.papermc.io/v2/projects/paper/versions/${version}/builds/${version.includes('latest') ? '0' : 'latest'}/downloads/paper-${version}-latest.jar`;
+      
+      const downloadCmd = `cd ${this.minecraftPath} && curl -o paper-${version}.jar ${downloadUrl}`;
+      const downloadResult = await this.runAsMinecraft(downloadCmd);
+
+      if (downloadResult.code !== 0) {
+        throw new Error(`Failed to download PaperMC version ${version}`);
+      }
+
+      console.log(`✓ Downloaded PaperMC version ${version}`);
+      return {
+        success: true,
+        version,
+        message: `Successfully updated to PaperMC ${version}`
+      };
+    } catch (error) {
+      console.error('❌ Error updating PaperMC:', error);
+      // Try to restore backup
+      try {
+        await this.runAsMinecraft(`[ -f ${this.minecraftPath}/paper.jar.bak ] && mv ${this.minecraftPath}/paper.jar.bak ${this.minecraftPath}/paper*.jar`);
+      } catch (restoreError) {
+        console.error('Error restoring backup:', restoreError);
+      }
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Install a plugin from repository by name
+   * @param {string} pluginName - Name of the plugin
+   * @param {string} version - Version to install (optional, defaults to latest)
+   */
+  async installPluginFromRepository(pluginName, version = 'latest') {
+    try {
+      console.log(`📥 Installing plugin from repository: ${pluginName}`);
+
+      // Download from PaperMC API
+      // Format: https://hangar.papermc.io/api/v1/projects/{project}/versions/{version}/downloads/{filename}
+      // Or simpler: https://hangar.papermc.io/api/v1/projects/{project}/latest/download
+      const downloadUrl = `https://hangar.papermc.io/api/v1/projects/${pluginName}/latest/download`;
+      
+      const tempPath = `/tmp/${pluginName}.jar`;
+      const downloadCmd = `curl -L -o ${tempPath} ${downloadUrl}`;
+      
+      const downloadResult = await this.runAsMinecraft(downloadCmd);
+      
+      if (downloadResult.code !== 0) {
+        throw new Error(`Failed to download plugin ${pluginName}`);
+      }
+
+      // Move to plugins directory
+      const moveCmd = `mv ${tempPath} ${this.minecraftPath}/plugins/${pluginName}.jar && chmod 755 ${this.minecraftPath}/plugins/${pluginName}.jar`;
+      const moveResult = await this.runAsMinecraft(moveCmd);
+
+      if (moveResult.code !== 0) {
+        throw new Error(`Failed to install plugin ${pluginName}`);
+      }
+
+      console.log(`✓ Successfully installed ${pluginName}`);
+      return {
+        success: true,
+        pluginName,
+        message: `Plugin ${pluginName} installed successfully. Server restart required.`
+      };
+    } catch (error) {
+      console.error('❌ Error installing plugin:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
 }
+
 
 export default SSHClient;

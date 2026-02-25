@@ -1495,6 +1495,139 @@ async function startServer() {
       }
     });
 
+    // Get available plugins from PaperMC repository
+    app.get('/api/minecraft/plugins/repository', verifyToken, async (req, res) => {
+      try {
+        const searchQuery = req.query.search || '';
+        console.log(`🔍 Fetching PaperMC plugins${searchQuery ? ` (search: ${searchQuery})` : ''}...`);
+
+        // Fetch from Hangar API (PaperMC plugin repository)
+        // https://hangar.papermc.io/api/v1/projects?limit=25&offset=0&q=search_query
+        const limit = 50;
+        const offset = (parseInt(req.query.page) || 1 - 1) * limit;
+        const query = searchQuery ? `&q=${encodeURIComponent(searchQuery)}` : '';
+        
+        const response = await fetch(`https://hangar.papermc.io/api/v1/projects?limit=${limit}&offset=${offset}${query}`);
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch from Hangar API: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        
+        // Transform the response to match our needs
+        const plugins = data.result.map(plugin => ({
+          name: plugin.name,
+          slug: plugin.slug,
+          description: plugin.description,
+          author: plugin.owner,
+          downloads: plugin.stats?.downloads || 0,
+          icon: plugin.iconUrl || null,
+          url: `https://hangar.papermc.io/${plugin.owner}/${plugin.slug}`
+        }));
+
+        res.json({
+          plugins,
+          pagination: {
+            page: parseInt(req.query.page) || 1,
+            limit,
+            total: data.pagination?.totalSize || plugins.length
+          }
+        });
+      } catch (error) {
+        console.error('❌ Error fetching plugins from repository:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Install a plugin from repository
+    app.post('/api/servers/:vmid/minecraft/plugins/install-from-repo', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const { pluginName, version } = req.body;
+
+        if (!pluginName) {
+          return res.status(400).json({ error: 'Plugin name is required' });
+        }
+
+        // Check permissions - admin or creator only
+        const creatorId = await ManagedServer.getCreator(vmid);
+        if (req.user.role !== 'admin' && creatorId !== req.user.userId) {
+          return res.status(403).json({ error: 'Only admins or server creators can install plugins' });
+        }
+
+        console.log(`📥 Installing plugin from repository: ${pluginName} on server ${vmid}`);
+        const manager = await getMinecraftManager(vmid);
+        const result = await manager.installPluginFromRepository(pluginName, version);
+        
+        res.json(result);
+      } catch (error) {
+        console.error('❌ Error installing plugin from repository:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get PaperMC version
+    app.get('/api/servers/:vmid/minecraft/version', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const manager = await getMinecraftManager(vmid);
+        const version = await manager.getPaperMCVersion();
+        res.json({ version, isPaperMC: version !== null });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Update PaperMC version
+    app.post('/api/servers/:vmid/minecraft/version', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const { version } = req.body;
+
+        if (!version) {
+          return res.status(400).json({ error: 'Version is required' });
+        }
+
+        // Check permissions - admin or creator only
+        const creatorId = await ManagedServer.getCreator(vmid);
+        if (req.user.role !== 'admin' && creatorId !== req.user.userId) {
+          return res.status(403).json({ error: 'Only admins or server creators can update PaperMC' });
+        }
+
+        console.log(`📥 Updating PaperMC on server ${vmid} to version ${version}`);
+        const manager = await getMinecraftManager(vmid);
+        const result = await manager.updatePaperMC(version);
+        
+        res.json(result);
+      } catch (error) {
+        console.error('❌ Error updating PaperMC:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get available PaperMC versions
+    app.get('/api/minecraft/versions', verifyToken, async (req, res) => {
+      try {
+        console.log('🔍 Fetching available PaperMC versions...');
+
+        // Fetch from PaperMC API
+        const response = await fetch('https://api.papermc.io/v2/projects/paper');
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch from PaperMC API: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        const versions = data.versions.slice(-20).reverse(); // Get last 20 versions, reversed (newest first)
+
+        res.json({ versions });
+      } catch (error) {
+        console.error('❌ Error fetching PaperMC versions:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Get server logs
     app.get('/api/servers/:vmid/minecraft/logs', verifyToken, async (req, res) => {
       try {
