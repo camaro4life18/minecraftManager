@@ -659,19 +659,32 @@ async function startServer() {
         const sortOrder = req.query.sortOrder || 'asc';
 
         // Get all servers from Proxmox
+        console.log('📋 Fetching servers from Proxmox...');
         let servers = await proxmox.getServers();
+        console.log(`✓ Found ${servers.length} servers with 'minecraft' in name`);
         
         // Enrich servers with creator information and seed
         const enrichedServers = await Promise.all(
           servers.map(async (server) => {
-            const creator = await ManagedServer.getCreator(server.vmid);
-            const serverRecord = await ManagedServer.getServer(server.vmid);
-            return {
-              ...server,
-              creator_id: creator,
-              is_owned_by_user: creator === req.user.userId,
-              seed: serverRecord?.seed || null
-            };
+            try {
+              const creator = await ManagedServer.getCreator(server.vmid);
+              const serverRecord = await ManagedServer.getServer(server.vmid);
+              return {
+                ...server,
+                creator_id: creator,
+                is_owned_by_user: creator === req.user.userId,
+                seed: serverRecord?.seed || null
+              };
+            } catch (enrichError) {
+              console.error(`⚠️  Error enriching server ${server.vmid}:`, enrichError.message);
+              // Return server with partial data if enrichment fails
+              return {
+                ...server,
+                creator_id: null,
+                is_owned_by_user: false,
+                seed: null
+              };
+            }
           })
         );
 
@@ -726,7 +739,8 @@ async function startServer() {
           }
         });
       } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('❌ Error fetching servers:', error);
+        res.status(500).json({ error: error.message, details: error.stack });
       }
     });
 
