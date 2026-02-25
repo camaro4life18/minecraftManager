@@ -36,22 +36,20 @@ class MockSSHClient {
     return { stdout: '', stderr: '', code: 0 };
   }
   
-  // Mock the findHangarProject method
-  async findHangarProject(slug) {
-    // Simulate Hangar API lookups with namespace mappings
-    const namespaceMap = {
-      'bluemap': 'Blue/BlueMap',
-      'essentialsx': 'EssentialsX/EssentialsX',
-      'luckperms': 'LuckPerms/LuckPerms',
-      'chunky-bukkit': 'Chunky/Chunky',
-      'chunky': 'Chunky/Chunky',
-      'coreprotect': 'CoreProtect/CoreProtect',
-      'backuper': 'Backuper/Backuper',
-      'toolstats': 'ToolStats/ToolStats',
-      'axinventoryrestore': 'AxInventoryRestore/AxInventoryRestore'
+  // Mock the getHangarDownloadUrl method
+  async getHangarDownloadUrl(slug) {
+    // Simulate Hangar API lookups with actual download URLs
+    const downloadUrlMap = {
+      'bluemap': 'https://hangarcdn.papermc.io/plugins/Blue/BlueMap/versions/5.16/PAPER/bluemap-5.16-paper.jar',
+      'essentialsx': 'https://hangarcdn.papermc.io/plugins/EssentialsX/EssentialsX/versions/latest/PAPER/essentialsx-latest.jar',
+      'chunky': 'https://hangarcdn.papermc.io/plugins/Chunky/Chunky/versions/latest/PAPER/chunky-latest.jar',
+      'coreprotect': 'https://hangarcdn.papermc.io/plugins/CoreProtect/CoreProtect/versions/latest/PAPER/coreprotect-latest.jar',
+      'backuper': 'https://hangarcdn.papermc.io/plugins/Backuper/Backuper/versions/latest/PAPER/backuper-latest.jar',
+      'toolstats': 'https://hangarcdn.papermc.io/plugins/ToolStats/ToolStats/versions/latest/PAPER/toolstats-latest.jar',
+      'axinventoryrestore': 'https://hangarcdn.papermc.io/plugins/AxInventoryRestore/AxInventoryRestore/versions/latest/PAPER/axinventoryrestore-latest.jar'
     };
     
-    return namespaceMap[slug] || slug;
+    return downloadUrlMap[slug] || `https://hangarcdn.papermc.io/plugins/${slug}/versions/latest/PAPER/${slug}-latest.jar`;
   }
 }
 
@@ -130,12 +128,12 @@ describe('MinecraftServerManager - Plugin Upgrade', () => {
   });
 
   describe('Upgrade Process', () => {
-    test('should construct correct Hangar URL with dynamic namespace lookup', async () => {
-      // Test that the URL includes the correct namespace (Blue/BlueMap for bluemap)
-      const downloadUrl = 'https://hangar.papermc.io/api/v1/projects/Blue/BlueMap/latest/download';
-      expect(downloadUrl).toContain('hangar.papermc.io');
-      expect(downloadUrl).toContain('Blue/BlueMap');
-      expect(downloadUrl).toContain('latest/download');
+    test('should construct correct download URL from Hangar', async () => {
+      // Test that the URL is a proper Hangar CDN download URL
+      const downloadUrl = 'https://hangarcdn.papermc.io/plugins/Blue/BlueMap/versions/5.16/PAPER/bluemap-5.16-paper.jar';
+      expect(downloadUrl).toContain('hangarcdn.papermc.io');
+      expect(downloadUrl).toContain('/plugins/');
+      expect(downloadUrl).toContain('.jar');
     });
 
     test('should use minecraft directory for temp files', async () => {
@@ -145,8 +143,8 @@ describe('MinecraftServerManager - Plugin Upgrade', () => {
       expect(tempPath).not.toContain('/tmp');
     });
 
-    test('should construct proper curl command with namespace URL', () => {
-      const downloadUrl = 'https://hangar.papermc.io/api/v1/projects/Blue/BlueMap/latest/download';
+    test('should construct proper curl command with Hangar CDN URL', () => {
+      const downloadUrl = 'https://hangarcdn.papermc.io/plugins/Blue/BlueMap/versions/5.16/PAPER/bluemap-5.16-paper.jar';
       const tempPath = '/opt/minecraft/paper/temp-123-bluemap-5.11-paper.jar';
       const downloadCmd = `curl -L -f -w "\\nHTTP_STATUS:%{http_code}\\n" -o ${tempPath} ${downloadUrl}`;
       
@@ -298,37 +296,37 @@ describe('MinecraftServerManager - Plugin Upgrade', () => {
 });
 
 describe('Hangar API', () => {
-  test('should construct valid Hangar API URLs with dynamic namespace', () => {
+  test('should construct valid Hangar CDN download URLs', () => {
     const testCases = [
-      { slug: 'bluemap', namespace: 'Blue/BlueMap', url: 'https://hangar.papermc.io/api/v1/projects/Blue/BlueMap/latest/download' },
-      { slug: 'essentialsx', namespace: 'EssentialsX/EssentialsX', url: 'https://hangar.papermc.io/api/v1/projects/EssentialsX/EssentialsX/latest/download' },
-      { slug: 'chunky', namespace: 'Chunky/Chunky', url: 'https://hangar.papermc.io/api/v1/projects/Chunky/Chunky/latest/download' },
+      { slug: 'bluemap', url: 'https://hangarcdn.papermc.io/plugins/Blue/BlueMap/versions/5.16/PAPER/bluemap-5.16-paper.jar' },
+      { slug: 'essentialsx', url: 'https://hangarcdn.papermc.io/plugins/EssentialsX/EssentialsX/versions/latest/PAPER/essentialsx-latest.jar' },
+      { slug: 'chunky', url: 'https://hangarcdn.papermc.io/plugins/Chunky/Chunky/versions/latest/PAPER/chunky-latest.jar' },
     ];
 
-    testCases.forEach(({ slug, namespace, url }) => {
-      expect(url).toContain('hangar.papermc.io');
-      expect(url).toContain(`projects/${namespace}`);
-      expect(url).toContain('latest/download');
+    testCases.forEach(({ slug, url }) => {
+      expect(url).toContain('hangarcdn.papermc.io');
+      expect(url).toContain('/plugins/');
+      expect(url).toContain('.jar');
     });
   });
 
   test('should follow redirects with -L flag', () => {
-    const cmd = 'curl -L https://hangar.papermc.io/api/v1/projects/Blue/BlueMap/latest/download';
+    const cmd = 'curl -L https://hangarcdn.papermc.io/plugins/Blue/BlueMap/versions/5.16/PAPER/bluemap-5.16-paper.jar';
     expect(cmd).toContain('-L');
   });
   
-  test('should handle namespace lookup for all plugins', async () => {
+  test('should get download URL from Hangar API', async () => {
     const mockSSH = new MockSSHClient();
     const manager = new MinecraftServerManager(mockSSH, '/opt/minecraft/paper', 'minecraft');
     
-    // Test that findHangarProject returns correct namespaces
-    const bluemapNamespace = await manager.ssh.findHangarProject('bluemap');
-    expect(bluemapNamespace).toBe('Blue/BlueMap');
+    // Test that getHangarDownloadUrl returns correct URLs
+    const bluemapUrl = await manager.ssh.getHangarDownloadUrl('bluemap');
+    expect(bluemapUrl).toContain('hangarcdn.papermc.io');
+    expect(bluemapUrl).toContain('Blue/BlueMap');
+    expect(bluemapUrl).toContain('.jar');
     
-    const essentialsxNamespace = await manager.ssh.findHangarProject('essentialsx');
-    expect(essentialsxNamespace).toBe('EssentialsX/EssentialsX');
-    
-    const chunkyNamespace = await manager.ssh.findHangarProject('chunky');
-    expect(chunkyNamespace).toBe('Chunky/Chunky');
+    const essentialsxUrl = await manager.ssh.getHangarDownloadUrl('essentialsx');
+    expect(essentialsxUrl).toContain('hangarcdn.papermc.io');
+    expect(essentialsxUrl).toContain('EssentialsX');
   });
 });
