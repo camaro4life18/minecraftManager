@@ -392,23 +392,19 @@ export class MinecraftServerManager {
    * @private
    */
   async runAsMinecraft(command) {
-    // Try to run as current user first (for read-only operations)
-    // If it fails with permission denied, try with sudo
-    try {
-      console.log(`📋 Attempting to run command as current user: ${command.substring(0, 80)}...`);
-      const result = await this.ssh.executeCommand(command);
-      if (result.code === 0 || !result.stderr.includes('Permission denied')) {
-        return result; // Command succeeded or failed for non-permission reasons
-      }
-      console.log('⚠️  Permission denied, attempting with sudo...');
-    } catch (error) {
-      console.log('❌ Command failed, attempting with sudo:', error.message);
-    }
-
-    // If direct command failed with permission, try with sudo
     const fullCommand = `sudo -n -u ${this.minecraftUser} bash -c '${command.replace(/'/g, "'\\''")}'`;
-    console.log(`📋 Running with sudo: ${fullCommand.substring(0, 80)}...`);
+    console.log(`📋 Running as minecraft user: ${fullCommand.substring(0, 80)}...`);
     return this.ssh.executeCommand(fullCommand);
+  }
+
+  /**
+   * Execute a systemctl command using sudo as the configured user
+   * @private
+   */
+  async runSystemctl(action) {
+    const command = `sudo -n -u ${this.minecraftUser} systemctl ${action} minecraft.service`;
+    console.log(`📋 Running systemctl: ${command.substring(0, 80)}...`);
+    return this.ssh.executeCommand(command);
   }
 
   /**
@@ -416,7 +412,7 @@ export class MinecraftServerManager {
    */
   async getStatus() {
     try {
-      const result = await this.ssh.executeCommand('systemctl status minecraft.service');
+      const result = await this.runSystemctl('status');
       const isRunning = result.stdout.includes('active (running)');
       const isEnabled = result.stdout.includes('enabled');
       
@@ -448,7 +444,7 @@ export class MinecraftServerManager {
    * Start Minecraft server
    */
   async start() {
-    const result = await this.ssh.executeCommand('systemctl start minecraft.service');
+    const result = await this.runSystemctl('start');
     return result.code === 0;
   }
 
@@ -456,7 +452,7 @@ export class MinecraftServerManager {
    * Stop Minecraft server
    */
   async stop() {
-    const result = await this.ssh.executeCommand('systemctl stop minecraft.service');
+    const result = await this.runSystemctl('stop');
     return result.code === 0;
   }
 
@@ -464,7 +460,7 @@ export class MinecraftServerManager {
    * Restart Minecraft server
    */
   async restart() {
-    const result = await this.ssh.executeCommand('systemctl restart minecraft.service');
+    const result = await this.runSystemctl('restart');
     return result.code === 0;
   }
 
@@ -526,20 +522,30 @@ export class MinecraftServerManager {
    * Update Minecraft server version
    */
   async updateVersion(downloadUrl, jarName) {
-    const commands = [
-      `cd ${this.minecraftPath}`,
-      'systemctl stop minecraft.service',
-      `sudo -u ${this.minecraftUser} mv ${jarName} ${jarName}.backup.$(date +%Y%m%d_%H%M%S)`,
-      `sudo -u ${this.minecraftUser} wget -O ${jarName} "${downloadUrl}"`,
-      `sudo -u ${this.minecraftUser} chmod 755 ${jarName}`,
-      'systemctl start minecraft.service'
-    ];
+    const stopResult = await this.runSystemctl('stop');
+    if (stopResult.code !== 0) {
+      return { success: false, output: stopResult.stdout, error: stopResult.stderr };
+    }
 
-    const result = await this.ssh.executeCommand(commands.join(' && '));
+    const backupResult = await this.runAsMinecraft(
+      `cd ${this.minecraftPath} && mv ${jarName} ${jarName}.backup.$(date +%Y%m%d_%H%M%S)`
+    );
+    if (backupResult.code !== 0) {
+      return { success: false, output: backupResult.stdout, error: backupResult.stderr };
+    }
+
+    const downloadResult = await this.runAsMinecraft(
+      `cd ${this.minecraftPath} && wget -O ${jarName} "${downloadUrl}" && chmod 755 ${jarName}`
+    );
+    if (downloadResult.code !== 0) {
+      return { success: false, output: downloadResult.stdout, error: downloadResult.stderr };
+    }
+
+    const startResult = await this.runSystemctl('start');
     return {
-      success: result.code === 0,
-      output: result.stdout,
-      error: result.stderr
+      success: startResult.code === 0,
+      output: startResult.stdout,
+      error: startResult.stderr
     };
   }
 
