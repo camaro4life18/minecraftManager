@@ -232,16 +232,20 @@ class SSHClient {
       const conn = new Client();
       let isResolved = false;
       
+      console.log(`[SSH] Attempting to connect to ${username}@${host}:${port || 22}`);
+      
       // Set timeout for the entire operation (30 seconds)
       const timeout = setTimeout(() => {
         if (!isResolved) {
           isResolved = true;
           conn.end();
+          console.log(`[SSH] Connection timeout after 30 seconds`);
           reject(new Error('SSH connection timeout. Please check the host, credentials, and network connectivity.'));
         }
       }, 30000);
       
       conn.on('ready', () => {
+        console.log(`[SSH] Connection established successfully`);
         // Generate SSH keys with PEM format
         const command = "ssh-keygen -t rsa -b 4096 -m pem -f ~/.ssh/id_rsa -N '' -C 'minecraft-manager' && echo '---PRIVATE_KEY---' && cat ~/.ssh/id_rsa && echo '---PUBLIC_KEY---' && cat ~/.ssh/id_rsa.pub";
         
@@ -321,6 +325,7 @@ class SSHClient {
           });
         });
       }).on('error', (err) => {
+        console.log(`[SSH] Connection error:`, err.message, err.level);
         clearTimeout(timeout);
         if (!isResolved) {
           isResolved = true;
@@ -335,6 +340,7 @@ class SSHClient {
         // Accept all host keys (required for first-time connections)
         hostVerifier: () => true
       });
+      console.log(`[SSH] Connection attempt initiated`);
     });
   }
 }
