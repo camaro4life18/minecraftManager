@@ -246,11 +246,13 @@ class SSHClient {
       
       conn.on('ready', () => {
         console.log(`[SSH] Connection established successfully`);
-        // Generate SSH keys with PEM format
-        const command = "ssh-keygen -t rsa -b 4096 -m pem -f ~/.ssh/id_rsa -N '' -C 'minecraft-manager' && echo '---PRIVATE_KEY---' && cat ~/.ssh/id_rsa && echo '---PUBLIC_KEY---' && cat ~/.ssh/id_rsa.pub";
+        // Generate SSH keys with PEM format - remove old keys first to avoid prompts
+        const command = "rm -f ~/.ssh/id_rsa ~/.ssh/id_rsa.pub && ssh-keygen -t rsa -b 4096 -m pem -f ~/.ssh/id_rsa -N '' -C 'minecraft-manager' && echo '---PRIVATE_KEY---' && cat ~/.ssh/id_rsa && echo '---PUBLIC_KEY---' && cat ~/.ssh/id_rsa.pub";
         
+        console.log(`[SSH] Executing key generation command`);
         conn.exec(command, (err, stream) => {
           if (err) {
+            console.log(`[SSH] Exec error:`, err.message);
             clearTimeout(timeout);
             conn.end();
             if (!isResolved) {
@@ -264,8 +266,11 @@ class SSHClient {
           let stderr = '';
 
           stream.on('close', (code, signal) => {
+            console.log(`[SSH] Command completed with code: ${code}`);
+            console.log(`[SSH] STDOUT length: ${stdout.length}, STDERR length: ${stderr.length}`);
             
             if (code !== 0) {
+              console.log(`[SSH] Command failed. STDERR:`, stderr);
               clearTimeout(timeout);
               conn.end();
               if (!isResolved) {
@@ -276,8 +281,10 @@ class SSHClient {
             }
 
             // Parse the output to extract keys
+            console.log(`[SSH] Parsing keys from output`);
             const parts = stdout.split('---PRIVATE_KEY---');
             if (parts.length < 2) {
+              console.log(`[SSH] Failed to find private key marker`);
               clearTimeout(timeout);
               conn.end();
               if (!isResolved) {
@@ -320,8 +327,10 @@ class SSHClient {
             });
           }).on('data', (data) => {
             stdout += data.toString();
+            console.log(`[SSH] Received stdout data: ${data.toString().substring(0, 100)}...`);
           }).stderr.on('data', (data) => {
             stderr += data.toString();
+            console.log(`[SSH] Received stderr data: ${data.toString()}`);
           });
         });
       }).on('error', (err) => {
