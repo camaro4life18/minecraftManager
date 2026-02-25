@@ -877,8 +877,12 @@ export class MinecraftServerManager {
       // Get the downloadURL from Hangar API dynamically
       const downloadUrl = await this.getHangarDownloadUrl(slug);
       
+      // Extract the actual filename from the download URL
+      const newPluginFilename = downloadUrl.split('/').pop();
+      console.log(`📥 New filename from URL: ${newPluginFilename}`);
+      
       // Use minecraft directory for temp file since /tmp may not be writable
-      const tempPath = `${this.minecraftPath}/temp-${Date.now()}-${pluginName}`;
+      const tempPath = `${this.minecraftPath}/temp-${Date.now()}-${newPluginFilename}`;
       // Use -w to capture HTTP status code, -v for verbose (redirected to stderr), -f to fail on HTTP error
       const downloadCmd = `curl -L -f -w "\\nHTTP_STATUS:%{http_code}\\n" -o ${tempPath} ${downloadUrl}`;
       
@@ -904,19 +908,28 @@ export class MinecraftServerManager {
       const backupCmd = `cp ${this.minecraftPath}/plugins/${pluginName} ${this.minecraftPath}/plugins/${pluginName}.bak`;
       await this.runAsMinecraft(backupCmd);
 
-      // Move new plugin to plugins directory
-      const moveCmd = `mv ${tempPath} ${this.minecraftPath}/plugins/${pluginName}`;
+      // Move new plugin to plugins directory with the new filename
+      const newPluginPath = `${this.minecraftPath}/plugins/${newPluginFilename}`;
+      const moveCmd = `mv ${tempPath} ${newPluginPath}`;
       const moveResult = await this.runAsMinecraft(moveCmd);
       
       if (moveResult.code !== 0) {
         throw new Error(`Failed to update ${pluginName}`);
       }
 
-      console.log(`✓ Successfully upgraded ${pluginName}`);
+      // If the new filename differs from the old one, remove the old file
+      if (newPluginFilename !== pluginName) {
+        console.log(`🔄 Replacing old filename: ${pluginName} → ${newPluginFilename}`);
+        const removeCmd = `rm -f ${this.minecraftPath}/plugins/${pluginName}`;
+        await this.runAsMinecraft(removeCmd);
+      }
+
+      console.log(`✓ Successfully upgraded to new version: ${newPluginFilename}`);
       return {
         success: true,
-        pluginName,
-        message: `Successfully upgraded ${pluginName}. Restart server to load the new version.`
+        oldPluginName: pluginName,
+        newPluginName: newPluginFilename,
+        message: `Successfully upgraded from ${pluginName} to ${newPluginFilename}. Restart server to load the new version.`
       };
     } catch (error) {
       console.error('❌ Error upgrading plugin:', error);
