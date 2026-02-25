@@ -658,9 +658,31 @@ async function startServer() {
         const sortBy = req.query.sortBy || 'vmid';
         const sortOrder = req.query.sortOrder || 'asc';
 
+        // Load Proxmox config from database (updated in real-time when admin saves config)
+        console.log('📋 Loading Proxmox config from database...');
+        const proxmoxHost = await AppConfig.get('proxmox_host');
+        const proxmoxUsername = await AppConfig.get('proxmox_username');
+        const proxmoxPassword = await AppConfig.get('proxmox_password');
+        const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
+
+        if (!proxmoxHost || !proxmoxUsername || !proxmoxPassword) {
+          return res.status(400).json({ 
+            error: 'Proxmox not configured',
+            message: 'Please configure Proxmox credentials in Admin Settings → Configuration'
+          });
+        }
+
+        // Create a fresh ProxmoxClient with current database credentials
+        const currentProxmox = new ProxmoxClient({
+          host: proxmoxHost,
+          username: proxmoxUsername,
+          password: proxmoxPassword,
+          realm: proxmoxRealm
+        });
+
         // Get all servers from Proxmox
-        console.log('📋 Fetching servers from Proxmox...');
-        let servers = await proxmox.getServers();
+        console.log(`📋 Fetching servers from Proxmox (${proxmoxHost})...`);
+        let servers = await currentProxmox.getServers();
         console.log(`✓ Found ${servers.length} servers with 'minecraft' in name`);
         
         // Enrich servers with creator information and seed
