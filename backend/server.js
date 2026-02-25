@@ -1540,6 +1540,74 @@ async function startServer() {
       }
     });
 
+    // Get popular/trending plugins from PaperMC repository
+    app.get('/api/minecraft/plugins/popular', verifyToken, async (req, res) => {
+      try {
+        console.log('🔍 Fetching popular PaperMC plugins...');
+
+        // Fetch popular plugins sorted by downloads
+        const response = await fetch('https://hangar.papermc.io/api/v1/projects?limit=20&offset=0&sort=downloads');
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch from Hangar API: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        
+        // Transform the response
+        const plugins = data.result.map(plugin => ({
+          name: plugin.name,
+          slug: plugin.slug,
+          description: plugin.description,
+          author: plugin.owner,
+          downloads: plugin.stats?.downloads || 0,
+          icon: plugin.iconUrl || null,
+          url: `https://hangar.papermc.io/${plugin.owner}/${plugin.slug}`
+        }));
+
+        res.json({ plugins });
+      } catch (error) {
+        console.error('❌ Error fetching popular plugins:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get plugin details with metadata from repository
+    app.get('/api/minecraft/plugins/:slug', verifyToken, async (req, res) => {
+      try {
+        const { slug } = req.params;
+        console.log(`🔍 Fetching plugin details: ${slug}`);
+
+        const response = await fetch(`https://hangar.papermc.io/api/v1/projects/${slug}`);
+        
+        if (!response.ok) {
+          // Plugin not found in repository, return basic info
+          return res.json({
+            name: slug,
+            description: 'Plugin not found in repository',
+            icon: null,
+            found: false
+          });
+        }
+
+        const plugin = await response.json();
+        
+        res.json({
+          name: plugin.name,
+          slug: plugin.slug,
+          description: plugin.description,
+          author: plugin.owner,
+          downloads: plugin.stats?.downloads || 0,
+          icon: plugin.iconUrl || null,
+          url: `https://hangar.papermc.io/${plugin.owner}/${plugin.slug}`,
+          found: true
+        });
+      } catch (error) {
+        console.error('❌ Error fetching plugin details:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Install a plugin from repository
     app.post('/api/servers/:vmid/minecraft/plugins/install-from-repo', verifyToken, async (req, res) => {
       try {

@@ -19,9 +19,11 @@ function ServerManagementModal({ server, onClose }) {
   const [pluginUrl, setPluginUrl] = useState('');
   const [uploadFile, setUploadFile] = useState(null);
   const [repositoryPlugins, setRepositoryPlugins] = useState([]);
+  const [popularPlugins, setPopularPlugins] = useState([]);
   const [pluginSearchQuery, setPluginSearchQuery] = useState('');
   const [pluginSearchPage, setPluginSearchPage] = useState(1);
   const [pluginSearchLoading, setPluginSearchLoading] = useState(false);
+  const [pluginMetadata, setPluginMetadata] = useState({});
 
   // Version management state
   const [currentVersion, setCurrentVersion] = useState(null);
@@ -100,6 +102,39 @@ function ServerManagementModal({ server, onClose }) {
           if (pluginsRes.ok) {
             const data = await pluginsRes.json();
             setPlugins(data.plugins);
+
+            // Fetch metadata for installed plugins
+            const metadata = {};
+            for (const pluginName of data.plugins) {
+              try {
+                const slug = pluginName.toLowerCase().replace(/\.jar$/, '').replace(/ /g, '-');
+                const metaRes = await fetch(
+                  `${process.env.REACT_APP_API_URL}/api/minecraft/plugins/${slug}`,
+                  { headers: { 'Authorization': `Bearer ${token}` } }
+                );
+                if (metaRes.ok) {
+                  const metaData = await metaRes.json();
+                  metadata[pluginName] = metaData;
+                }
+              } catch (err) {
+                console.error(`Failed to fetch metadata for ${pluginName}:`, err);
+              }
+            }
+            setPluginMetadata(metadata);
+          }
+
+          // Load popular plugins
+          try {
+            const popularRes = await fetch(
+              `${process.env.REACT_APP_API_URL}/api/minecraft/plugins/popular`,
+              { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            if (popularRes.ok) {
+              const data = await popularRes.json();
+              setPopularPlugins(data.plugins);
+            }
+          } catch (err) {
+            console.error('Failed to load popular plugins:', err);
           }
           break;
 
@@ -575,12 +610,15 @@ function ServerManagementModal({ server, onClose }) {
                   </button>
                 </div>
 
-                {repositoryPlugins.length > 0 && (
+                {(repositoryPlugins.length > 0 || popularPlugins.length > 0) && (
                   <div className="repo-results">
-                    <h4>Available Plugins ({repositoryPlugins.length})</h4>
+                    <h4>{repositoryPlugins.length > 0 ? 'Search Results' : 'Popular Plugins'} ({(repositoryPlugins.length || popularPlugins.length)})</h4>
                     <div className="plugin-list">
-                      {repositoryPlugins.map((plugin) => (
+                      {(repositoryPlugins.length > 0 ? repositoryPlugins : popularPlugins).map((plugin) => (
                         <div key={plugin.slug} className="plugin-item">
+                          {plugin.icon && (
+                            <img src={plugin.icon} alt={plugin.name} className="plugin-icon" />
+                          )}
                           <div className="plugin-info">
                             <h5>{plugin.name}</h5>
                             <p className="plugin-desc">{plugin.description}</p>
@@ -637,12 +675,30 @@ function ServerManagementModal({ server, onClose }) {
               
               <div className="installed-plugins">
                 <h3>Installed Plugins ({plugins.length})</h3>
-                <ul>
-                  {plugins.map((plugin) => (
-                    <li key={plugin}>
-                      <span>{plugin}</span>
-                      <button onClick={() => handleDeletePlugin(plugin)}>Delete</button>
-                    </li>
+                <ul className="installed-plugins-list">
+                  {plugins.map((plugin) => {
+                    const metadata = pluginMetadata[plugin];
+                    return (
+                      <li key={plugin} className="installed-plugin-item">
+                        <div className="plugin-content">
+                          {metadata?.icon && (
+                            <img src={metadata.icon} alt={plugin} className="plugin-icon-small" />
+                          )}
+                          <div className="plugin-details">
+                            <span className="plugin-name">{plugin}</span>
+                            {metadata?.description && (
+                              <span className="plugin-description">{metadata.description}</span>
+                            )}
+                            {metadata?.author && (
+                              <span className="plugin-author">by {metadata.author}</span>
+                            )}
+                          </div>
+                        </div>
+                        <button onClick={() => handleDeletePlugin(plugin)} className="delete-btn">Delete</button>
+                      </li>
+                    );
+                  })}
+                </ul>
                   ))}
                 </ul>
               </div>
