@@ -557,16 +557,18 @@ export class MinecraftServerManager {
    */
   async listPlugins() {
     try {
-      const command = `find ${this.minecraftPath}/plugins -maxdepth 1 -name "*.jar" -type f -exec basename {} \\; 2>/dev/null | sort`;
+      // Use simple ls approach to avoid shell escaping issues
+      const command = `ls -1 ${this.minecraftPath}/plugins/*.jar 2>/dev/null | sed 's|.*/||' | sort`;
       console.log(`🔍 Listing plugins from: ${this.minecraftPath}/plugins`);
       console.log(`📋 Running command: ${command}`);
       
       const result = await this.runAsMinecraft(command);
       
-      console.log(`📊 Command stdout length: ${result.stdout.length}`);
+      console.log(`📊 Command stdout: "${result.stdout}"`);
+      console.log(`📊 Command stderr: "${result.stderr}"`);
       console.log(`📊 Command exit code: ${result.code}`);
       
-      if (!result.stdout.trim()) {
+      if (!result.stdout || !result.stdout.trim()) {
         console.log('⚠️  No plugins found (empty result)');
         return [];
       }
