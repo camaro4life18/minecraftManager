@@ -214,8 +214,31 @@ function SSHConfigModal({ server, onClose, onSuccess }) {
               <small>Used only for key generation, not stored</small>
             </div>
 
+            {generatingKeys && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '1rem',
+                backgroundColor: '#2d2d30',
+                borderRadius: '4px',
+                marginBottom: '1rem'
+              }}>
+                <div className="spinner" style={{
+                  border: '3px solid #3d3d3d',
+                  borderTop: '3px solid #007acc',
+                  borderRadius: '50%',
+                  width: '24px',
+                  height: '24px',
+                  animation: 'spin 1s linear infinite',
+                  marginRight: '0.75rem'
+                }}></div>
+                <span style={{ color: '#007acc' }}>Generating SSH keys on server... This may take up to 30 seconds.</span>
+              </div>
+            )}
+
             <div className="modal-actions">
-              <button type="button" onClick={onClose} className="cancel-button">
+              <button type="button" onClick={onClose} className="cancel-button" disabled={generatingKeys}>
                 Cancel
               </button>
               <button type="submit" className="submit-button" disabled={generatingKeys}>

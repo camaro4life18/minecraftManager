@@ -46,7 +46,8 @@ class SSHClient {
         port: this.port,
         username: this.username,
         privateKey: this._getPrivateKey(),
-        passphrase: this.passphrase
+        passphrase: this.passphrase,
+        hostVerifier: () => true
       });
     });
   }
@@ -83,7 +84,8 @@ class SSHClient {
         port: this.port,
         username: this.username,
         privateKey: this._getPrivateKey(),
-        passphrase: this.passphrase
+        passphrase: this.passphrase,
+        hostVerifier: () => true
       });
     });
   }
@@ -120,7 +122,8 @@ class SSHClient {
         port: this.port,
         username: this.username,
         privateKey: this._getPrivateKey(),
-        passphrase: this.passphrase
+        passphrase: this.passphrase,
+        hostVerifier: () => true
       });
     });
   }
@@ -157,7 +160,8 @@ class SSHClient {
         port: this.port,
         username: this.username,
         privateKey: this._getPrivateKey(),
-        passphrase: this.passphrase
+        passphrase: this.passphrase,
+        hostVerifier: () => true
       });
     });
   }
@@ -194,7 +198,8 @@ class SSHClient {
         port: this.port,
         username: this.username,
         privateKey: this._getPrivateKey(),
-        passphrase: this.passphrase
+        passphrase: this.passphrase,
+        hostVerifier: () => true
       });
     });
   }
@@ -326,7 +331,9 @@ class SSHClient {
         port: port || 22,
         username,
         password,
-        readyTimeout: 20000  // 20 second connection timeout
+        readyTimeout: 20000,  // 20 second connection timeout
+        // Accept all host keys (required for first-time connections)
+        hostVerifier: () => true
       });
     });
   }
