@@ -70,9 +70,6 @@ function AppContent() {
   useEffect(() => {
     if (!authLoading) {
       fetchServers();
-      // Refresh every 10 seconds
-      const interval = setInterval(fetchServers, 10000);
-      return () => clearInterval(interval);
     }
   }, [isAuthenticated, token, authLoading, page, searchTerm, sortBy]);
 
