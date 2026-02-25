@@ -147,6 +147,14 @@ export async function initializeDatabase() {
     });
 
     await client.query(`
+      ALTER TABLE managed_servers ADD COLUMN minecraft_user VARCHAR(100) DEFAULT 'minecraft'
+    `).catch(err => {
+      if (!err.message.includes('already exists')) {
+        console.warn('Add minecraft_user column:', err.message);
+      }
+    });
+
+    await client.query(`
       ALTER TABLE managed_servers ADD COLUMN minecraft_version VARCHAR(100)
     `).catch(err => {
       if (!err.message.includes('already exists')) {

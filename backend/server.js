@@ -1102,7 +1102,11 @@ async function startServer() {
     const getMinecraftManager = async (vmid) => {
       const ssh = await getSSHClient(vmid);
       const sshConfig = await ManagedServer.getSSHConfig(vmid);
-      return new MinecraftServerManager(ssh, sshConfig.minecraft_path);
+      return new MinecraftServerManager(
+        ssh, 
+        sshConfig.minecraft_path,
+        sshConfig.minecraft_user || 'minecraft'
+      );
     };
 
     // Generate SSH keys on a Minecraft server (admin or creator only)

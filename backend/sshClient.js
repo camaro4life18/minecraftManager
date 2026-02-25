@@ -381,9 +381,20 @@ class SSHClient {
  * Minecraft-specific server management functions
  */
 export class MinecraftServerManager {
-  constructor(sshClient, minecraftPath = '/opt/minecraft') {
+  constructor(sshClient, minecraftPath = '/opt/minecraft', minecraftUser = 'minecraft') {
     this.ssh = sshClient;
     this.minecraftPath = minecraftPath;
+    this.minecraftUser = minecraftUser;
+  }
+
+  /**
+   * Execute a command as the minecraft user, preserving file ownership
+   * @private
+   */
+  async runAsMinecraft(command) {
+    // Run command as minecraft user via sudo, capturing owner
+    const fullCommand = `sudo -u ${this.minecraftUser} bash -c '${command.replace(/'/g, "'\\''")}'`;
+    return this.ssh.executeCommand(fullCommand);
   }
 
   /**
@@ -477,7 +488,8 @@ export class MinecraftServerManager {
       }
     }
 
-    await this.ssh.writeFile(`${this.minecraftPath}/server.properties`, newContent);
+    // Write with proper ownership via minecraft user
+    await this.runAsMinecraft(`cat > ${this.minecraftPath}/server.properties << 'EOF'\n${newContent}\nEOF`);
     return true;
   }
 
@@ -486,11 +498,11 @@ export class MinecraftServerManager {
    */
   async getVersion() {
     try {
-      // Try to read version from server jar
-      const result = await this.ssh.executeCommand(
-        `cd ${this.minecraftPath} && ls -1 minecraft_server*.jar || ls -1 server*.jar || ls -1 spigot*.jar || ls -1 paper*.jar`
+      // Try to read version from server jar - run as minecraft user
+      const result = await this.runAsMinecraft(
+        `cd ${this.minecraftPath} && (ls -1 minecraft_server*.jar 2>/dev/null || ls -1 server*.jar 2>/dev/null || ls -1 spigot*.jar 2>/dev/null || ls -1 paper*.jar 2>/dev/null || echo 'unknown')`
       );
-      return result.stdout.trim();
+      return result.stdout.trim() || 'unknown';
     } catch (error) {
       return 'unknown';
     }
@@ -503,8 +515,9 @@ export class MinecraftServerManager {
     const commands = [
       `cd ${this.minecraftPath}`,
       'systemctl stop minecraft.service',
-      `mv ${jarName} ${jarName}.backup.$(date +%Y%m%d_%H%M%S)`,
-      `wget -O ${jarName} "${downloadUrl}"`,
+      `sudo -u ${this.minecraftUser} mv ${jarName} ${jarName}.backup.$(date +%Y%m%d_%H%M%S)`,
+      `sudo -u ${this.minecraftUser} wget -O ${jarName} "${downloadUrl}"`,
+      `sudo -u ${this.minecraftUser} chmod 755 ${jarName}`,
       'systemctl start minecraft.service'
     ];
 
@@ -517,16 +530,13 @@ export class MinecraftServerManager {
   }
 
   /**
-   * Install/Update a plugin
+   * Install/Update a plugin via download URL
    */
   async installPlugin(pluginName, downloadUrl) {
-    const commands = [
-      `cd ${this.minecraftPath}/plugins`,
-      `wget -O ${pluginName} "${downloadUrl}"`,
-      'chmod 644 ' + pluginName
-    ];
-
-    const result = await this.ssh.executeCommand(commands.join(' && '));
+    const pluginPath = `${this.minecraftPath}/plugins/${pluginName}`;
+    const result = await this.runAsMinecraft(
+      `cd ${this.minecraftPath}/plugins && wget -O ${pluginName} "${downloadUrl}" && chmod 755 ${pluginName}`
+    );
     return result.code === 0;
   }
 
@@ -534,27 +544,38 @@ export class MinecraftServerManager {
    * Upload a plugin from local file
    */
   async uploadPlugin(localPath, pluginName) {
-    await this.ssh.uploadFile(localPath, `${this.minecraftPath}/plugins/${pluginName}`);
-    await this.ssh.executeCommand(`chmod 644 ${this.minecraftPath}/plugins/${pluginName}`);
+    const remotePath = `${this.minecraftPath}/plugins/${pluginName}`;
+    // Upload to temp location first, then move with proper ownership
+    await this.ssh.uploadFile(localPath, `/tmp/${pluginName}`);
+    // Move to plugins directory as minecraft user
+    await this.runAsMinecraft(`mv /tmp/${pluginName} ${remotePath} && chmod 755 ${remotePath}`);
     return true;
   }
 
   /**
-   * List installed plugins
+   * List installed plugins (auto-discovers from plugins directory)
    */
   async listPlugins() {
-    const result = await this.ssh.executeCommand(`ls -1 ${this.minecraftPath}/plugins/*.jar 2>/dev/null || echo ""`);
-    if (!result.stdout.trim()) {
+    try {
+      const result = await this.runAsMinecraft(
+        `find ${this.minecraftPath}/plugins -maxdepth 1 -name "*.jar" -type f -printf '%f\\n' 2>/dev/null | sort`
+      );
+      if (!result.stdout.trim()) {
+        return [];
+      }
+      return result.stdout.trim().split('\n').filter(p => p.trim());
+    } catch (error) {
+      console.error('Error listing plugins:', error);
       return [];
     }
-    return result.stdout.trim().split('\n').map(p => path.basename(p));
   }
 
   /**
    * Remove a plugin
    */
   async removePlugin(pluginName) {
-    const result = await this.ssh.executeCommand(`rm -f ${this.minecraftPath}/plugins/${pluginName}`);
+    // Remove plugin file - run as minecraft user to maintain ownership
+    const result = await this.runAsMinecraft(`rm -f ${this.minecraftPath}/plugins/${pluginName}`);
     return result.code === 0;
   }
 
@@ -562,8 +583,9 @@ export class MinecraftServerManager {
    * Get server logs (last N lines)
    */
   async getLogs(lines = 100) {
-    const result = await this.ssh.executeCommand(
-      `tail -n ${lines} ${this.minecraftPath}/logs/latest.log`
+    // Read logs as minecraft user
+    const result = await this.runAsMinecraft(
+      `tail -n ${lines} ${this.minecraftPath}/logs/latest.log 2>/dev/null || echo "No logs found"`
     );
     return result.stdout;
   }
