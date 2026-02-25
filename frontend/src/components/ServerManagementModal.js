@@ -665,7 +665,8 @@ function ServerManagementModal({ server, onClose }) {
                                   className="plugin-card-icon" 
                                   onError={(e) => {
                                     e.target.style.display = 'none';
-                                    e.target.nextElementSibling?.style.display = 'flex';
+                                    const placeholder = e.target.nextElementSibling;
+                                    if (placeholder) placeholder.style.display = 'flex';
                                   }}
                                 />
                               )}
@@ -759,7 +760,8 @@ function ServerManagementModal({ server, onClose }) {
                                   className="installed-plugin-icon" 
                                   onError={(e) => {
                                     e.target.style.display = 'none';
-                                    e.target.nextElementSibling?.style.display = 'flex';
+                                    const placeholder = e.target.nextElementSibling;
+                                    if (placeholder) placeholder.style.display = 'flex';
                                   }}
                                 />
                               )}
