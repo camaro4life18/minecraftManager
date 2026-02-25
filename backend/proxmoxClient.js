@@ -1,4 +1,5 @@
 import axios from 'axios';
+import https from 'https';
 
 class ProxmoxClient {
   constructor(config) {
@@ -7,11 +8,15 @@ class ProxmoxClient {
     this.password = config.password;
     this.realm = config.realm || 'pam';
     this.token = null;
+    
+    // Create custom HTTPS agent that ignores SSL certificate errors
+    const httpsAgent = new https.Agent({
+      rejectUnauthorized: false // Note: In production, use proper SSL certificates
+    });
+    
     this.api = axios.create({
       baseURL: `https://${this.host}:8006/api2/json`,
-      httpsAgent: {
-        rejectUnauthorized: false // Note: In production, use proper SSL certificates
-      }
+      httpsAgent: httpsAgent
     });
   }
 
