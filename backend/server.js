@@ -1105,6 +1105,45 @@ async function startServer() {
       return new MinecraftServerManager(ssh, sshConfig.minecraft_path);
     };
 
+    // Generate SSH keys on a Minecraft server (admin or creator only)
+    app.post('/api/servers/:vmid/ssh-generate-keys', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        
+        // Check permissions
+        const creatorId = await ManagedServer.getCreator(vmid);
+        if (req.user.role !== 'admin' && creatorId !== req.user.userId) {
+          return res.status(403).json({ error: 'Only admins or server creators can generate SSH keys' });
+        }
+
+        const { host, port, username, password } = req.body;
+        
+        if (!host || !username || !password) {
+          return res.status(400).json({ 
+            error: 'Missing required fields: host, username, password' 
+          });
+        }
+
+        // Generate SSH keys on the remote server
+        const { privateKey, publicKey } = await SSHClient.generateSSHKeys(
+          host,
+          port || 22,
+          username,
+          password
+        );
+
+        res.json({ 
+          success: true, 
+          privateKey,
+          publicKey,
+          message: 'SSH keys generated successfully'
+        });
+      } catch (error) {
+        console.error('SSH key generation failed:', error);
+        res.status(500).json({ error: `Failed to generate SSH keys: ${error.message}` });
+      }
+    });
+
     // Configure SSH for a server (admin or creator only)
     app.post('/api/servers/:vmid/ssh-config', verifyToken, async (req, res) => {
       try {

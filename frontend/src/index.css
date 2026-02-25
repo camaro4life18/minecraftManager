@@ -493,6 +493,7 @@ body {
   overflow-y: auto;
 }
 
+/* Tabs */
 .tabs {
   display: flex;
   gap: 0.5rem;
@@ -501,7 +502,8 @@ body {
   padding-bottom: 0.5rem;
 }
 
-.tabs button {
+.tabs button,
+.tab-button {
   padding: 0.6rem 1.2rem;
   background-color: transparent;
   color: #999;
@@ -512,11 +514,13 @@ body {
   transition: all 0.3s ease;
 }
 
-.tabs button:hover {
+.tabs button:hover,
+.tab-button:hover {
   color: #4a9eff;
 }
 
-.tabs button.active {
+.tabs button.active,
+.tab-button.active {
   color: #4a9eff;
   border-bottom-color: #4a9eff;
 }

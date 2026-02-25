@@ -213,6 +213,85 @@ class SSHClient {
     // Otherwise, assume it's the key content itself
     return this.privateKey;
   }
+
+  /**
+   * Static method to generate SSH keys on a remote server using password auth
+   * @param {string} host - Server hostname/IP
+   * @param {number} port - SSH port
+   * @param {string} username - SSH username
+   * @param {string} password - SSH password
+   * @returns {Promise<{privateKey: string, publicKey: string}>}
+   */
+  static async generateSSHKeys(host, port, username, password) {
+    return new Promise((resolve, reject) => {
+      const conn = new Client();
+      
+      conn.on('ready', () => {
+        // Generate SSH keys with PEM format
+        const command = "ssh-keygen -t rsa -b 4096 -m pem -f ~/.ssh/id_rsa -N '' -C 'minecraft-manager' && echo '---PRIVATE_KEY---' && cat ~/.ssh/id_rsa && echo '---PUBLIC_KEY---' && cat ~/.ssh/id_rsa.pub";
+        
+        conn.exec(command, (err, stream) => {
+          if (err) {
+            conn.end();
+            return reject(err);
+          }
+
+          let stdout = '';
+          let stderr = '';
+
+          stream.on('close', (code, signal) => {
+            conn.end();
+            
+            if (code !== 0) {
+              reject(new Error(`Key generation failed: ${stderr}`));
+              return;
+            }
+
+            // Parse the output to extract keys
+            const parts = stdout.split('---PRIVATE_KEY---');
+            if (parts.length < 2) {
+              reject(new Error('Failed to parse private key from server response'));
+              return;
+            }
+
+            const privateKeyPart = parts[1].split('---PUBLIC_KEY---');
+            if (privateKeyPart.length < 2) {
+              reject(new Error('Failed to parse public key from server response'));
+              return;
+            }
+
+            const privateKey = privateKeyPart[0].trim();
+            const publicKey = privateKeyPart[1].trim();
+
+            // Add public key to authorized_keys
+            const addKeyCommand = `echo '${publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`;
+            
+            conn.exec(addKeyCommand, (err, stream) => {
+              if (err) {
+                console.warn('Warning: Could not add key to authorized_keys:', err);
+              }
+
+              stream.on('close', (code, signal) => {
+                conn.end();
+                resolve({ privateKey, publicKey });
+              });
+            });
+          }).on('data', (data) => {
+            stdout += data.toString();
+          }).stderr.on('data', (data) => {
+            stderr += data.toString();
+          });
+        });
+      }).on('error', (err) => {
+        reject(err);
+      }).connect({
+        host,
+        port: port || 22,
+        username,
+        password
+      });
+    });
+  }
 }
 
 /**
