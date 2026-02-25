@@ -657,9 +657,20 @@ function ServerManagementModal({ server, onClose }) {
                       {(repositoryPlugins.length > 0 ? repositoryPlugins : popularPlugins).map((plugin) => (
                         <div key={plugin.slug} className="plugin-card">
                           <div className="plugin-card-header">
-                            {plugin.icon && (
-                              <img src={plugin.icon} alt={plugin.name} className="plugin-card-icon" />
-                            )}
+                            <div className="plugin-icon-container">
+                              {plugin.icon && (
+                                <img 
+                                  src={plugin.icon} 
+                                  alt={plugin.name} 
+                                  className="plugin-card-icon" 
+                                  onError={(e) => {
+                                    e.target.style.display = 'none';
+                                    e.target.nextElementSibling?.style.display = 'flex';
+                                  }}
+                                />
+                              )}
+                              <div className="plugin-icon-placeholder">📦</div>
+                            </div>
                             <div className="plugin-card-title-section">
                               <h5 className="plugin-card-title">{plugin.name}</h5>
                               <p className="plugin-card-author">by {plugin.author}</p>
@@ -740,9 +751,20 @@ function ServerManagementModal({ server, onClose }) {
                       return (
                         <div key={plugin} className="installed-plugin-card">
                           <div className="installed-plugin-header">
-                            {metadata?.icon && (
-                              <img src={metadata.icon} alt={plugin} className="installed-plugin-icon" />
-                            )}
+                            <div className="plugin-icon-container-small">
+                              {metadata?.icon && (
+                                <img 
+                                  src={metadata.icon} 
+                                  alt={plugin} 
+                                  className="installed-plugin-icon" 
+                                  onError={(e) => {
+                                    e.target.style.display = 'none';
+                                    e.target.nextElementSibling?.style.display = 'flex';
+                                  }}
+                                />
+                              )}
+                              <div className="plugin-icon-placeholder-small">📦</div>
+                            </div>
                             <div className="installed-plugin-title-section">
                               <h5 className="installed-plugin-name">{plugin}</h5>
                               {metadata?.author && (

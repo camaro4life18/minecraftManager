@@ -1514,17 +1514,30 @@ async function startServer() {
         }
 
         const data = await response.json();
+        console.log(`✅ Received ${data.result?.length || 0} plugins from Hangar`);
+        if (data.result && data.result[0]) {
+          console.log(`🔧 Sample plugin structure:`, Object.keys(data.result[0]));
+        }
         
         // Transform the response to match our needs
-        const plugins = data.result.map(plugin => ({
-          name: plugin.name,
-          slug: plugin.slug,
-          description: plugin.description,
-          author: plugin.owner,
-          downloads: plugin.stats?.downloads || 0,
-          icon: plugin.iconUrl || null,
-          url: `https://hangar.papermc.io/${plugin.owner}/${plugin.slug}`
-        }));
+        const plugins = data.result.map(plugin => {
+          // Handle various possible icon URL field names
+          let iconUrl = plugin.iconUrl || plugin.avatar?.url || plugin.icon?.url || null;
+          // If it's a relative URL, make it absolute
+          if (iconUrl && !iconUrl.startsWith('http')) {
+            iconUrl = `https://hangar.papermc.io${iconUrl}`;
+          }
+          
+          return {
+            name: plugin.name,
+            slug: plugin.slug,
+            description: plugin.description,
+            author: plugin.owner,
+            downloads: plugin.stats?.downloads || 0,
+            icon: iconUrl,
+            url: `https://hangar.papermc.io/${plugin.owner}/${plugin.slug}`
+          };
+        });
 
         const page = parseInt(req.query.page) || 1;
         const total = data.pagination?.totalSize || 0;
@@ -1564,15 +1577,24 @@ async function startServer() {
         const data = await response.json();
         
         // Transform the response
-        const plugins = data.result.map(plugin => ({
-          name: plugin.name,
-          slug: plugin.slug,
-          description: plugin.description,
-          author: plugin.owner,
-          downloads: plugin.stats?.downloads || 0,
-          icon: plugin.iconUrl || null,
-          url: `https://hangar.papermc.io/${plugin.owner}/${plugin.slug}`
-        }));
+        const plugins = data.result.map(plugin => {
+          // Handle various possible icon URL field names
+          let iconUrl = plugin.iconUrl || plugin.avatar?.url || plugin.icon?.url || null;
+          // If it's a relative URL, make it absolute
+          if (iconUrl && !iconUrl.startsWith('http')) {
+            iconUrl = `https://hangar.papermc.io${iconUrl}`;
+          }
+          
+          return {
+            name: plugin.name,
+            slug: plugin.slug,
+            description: plugin.description,
+            author: plugin.owner,
+            downloads: plugin.stats?.downloads || 0,
+            icon: iconUrl,
+            url: `https://hangar.papermc.io/${plugin.owner}/${plugin.slug}`
+          };
+        });
 
         // Calculate total pages based on pagination info from Hangar
         const total = data.pagination?.totalSize || 0;
@@ -1614,13 +1636,20 @@ async function startServer() {
 
         const plugin = await response.json();
         
+        // Handle various possible icon URL field names
+        let iconUrl = plugin.iconUrl || plugin.avatar?.url || plugin.icon?.url || null;
+        // If it's a relative URL, make it absolute
+        if (iconUrl && !iconUrl.startsWith('http')) {
+          iconUrl = `https://hangar.papermc.io${iconUrl}`;
+        }
+        
         res.json({
           name: plugin.name,
           slug: plugin.slug,
           description: plugin.description,
           author: plugin.owner,
           downloads: plugin.stats?.downloads || 0,
-          icon: plugin.iconUrl || null,
+          icon: iconUrl,
           url: `https://hangar.papermc.io/${plugin.owner}/${plugin.slug}`,
           found: true
         });
