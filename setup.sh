@@ -13,6 +13,13 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Arrays to track what needs to be installed
+MISSING_PACKAGES=()
+NEEDS_NODEJS=false
+NEEDS_DOCKER=false
+NEEDS_POSTGRESQL=false
+NEEDS_GIT=false
+
 # Functions
 print_header() {
     echo ""
@@ -24,7 +31,7 @@ print_header() {
 
 print_step() {
     echo ""
-    echo -e "${BLUE}Step $1: $2${NC}"
+    echo -e "${BLUE}$1${NC}"
     echo "════════════════════════════════════"
 }
 
@@ -40,6 +47,23 @@ print_warning() {
     echo -e "${YELLOW}⚠️  $1${NC}"
 }
 
+print_info() {
+    echo -e "${BLUE}ℹ️  $1${NC}"
+}
+
+# Detect OS
+detect_os() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        OS_TYPE="macos"
+    elif [[ -f /etc/debian_version ]]; then
+        OS_TYPE="debian"
+    elif [[ -f /etc/redhat-release ]]; then
+        OS_TYPE="redhat"
+    else
+        OS_TYPE="unknown"
+    fi
+}
+
 # Main setup
 print_header
 
@@ -47,315 +71,309 @@ echo "This script will automatically install all required dependencies:"
 echo "  - Node.js and npm"
 echo "  - Docker and Docker Compose"
 echo "  - PostgreSQL"
+echo "  - Git (recommended)"
 echo "  - Project dependencies"
 echo ""
 echo "⚠️  This script requires sudo privileges to install system packages."
 echo ""
 
-# Step 0: Check for essential tools
-print_step "0" "Checking essential tools"
+detect_os
 
-# Check for curl
+# PHASE 1: CHECK ALL DEPENDENCIES
+print_step "Phase 1: Checking System Dependencies"
+echo ""
+
+# Check for curl (needed for installations)
+print_info "Checking for curl..."
 if ! command -v curl &> /dev/null; then
-    print_warning "curl not found. Installing..."
-    if [[ -f /etc/debian_version ]]; then
-        sudo apt-get update && sudo apt-get install -y curl
-    elif [[ -f /etc/redhat-release ]]; then
-        sudo dnf install -y curl
-    fi
-    print_success "curl installed"
+    print_warning "curl not found - will be installed"
+    MISSING_PACKAGES+=("curl")
 else
     print_success "curl found"
 fi
 
 # Check for sudo
-if ! command -v sudo &> /dev/null; then
+if ! command -v sudo &> /dev/null && [ "$EUID" -ne 0 ]; then
     print_error "sudo is required but not found"
     echo "Please install sudo or run this script as root"
     exit 1
 fi
 
-# Step 1: Check/Install Node.js
-print_step "1" "Checking for Node.js"
-
+# Check for Node.js
+print_info "Checking for Node.js..."
 if ! command -v node &> /dev/null; then
-    print_warning "Node.js not found. Installing Node.js..."
-    echo ""
-    
-    # Detect OS and install Node.js
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        print_warning "On macOS, installing Node.js via Homebrew..."
-        if command -v brew &> /dev/null; then
-            brew install node
-            print_success "Node.js installed via Homebrew"
-        else
-            print_error "Homebrew not found. Installing Homebrew first..."
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-            brew install node
-            print_success "Node.js installed"
-        fi
-        
-    elif [[ -f /etc/debian_version ]]; then
-        # Debian/Ubuntu
-        echo "📦 Installing Node.js on Debian/Ubuntu..."
-        
-        # Install Node.js 20.x LTS from NodeSource
-        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-        sudo apt-get install -y nodejs
-        
-        print_success "Node.js installed successfully"
-        
-    elif [[ -f /etc/redhat-release ]]; then
-        # RHEL/Fedora/CentOS
-        echo "📦 Installing Node.js on RHEL/Fedora..."
-        
-        # Install Node.js from NodeSource
-        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
-        sudo dnf install -y nodejs
-        
-        print_success "Node.js installed successfully"
-    else
-        # Unknown OS - try using package manager or provide instructions
-        print_error "Unknown OS. Please install Node.js manually:"
-        echo ""
-        echo "Visit: https://nodejs.org/"
-        echo "Or use your package manager:"
-        echo "  - Ubuntu/Debian: curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs"
-        echo "  - Fedora: curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash - && sudo dnf install -y nodejs"
-        exit 1
-    fi
-    
-    # Verify installation
-    if command -v node &> /dev/null; then
-        NODE_VERSION=$(node --version)
-        print_success "Node.js installed: $NODE_VERSION"
-    else
-        print_error "Node.js installation failed. Please install manually."
-        exit 1
-    fi
+    print_warning "Node.js not found - will be installed"
+    NEEDS_NODEJS=true
 else
     NODE_VERSION=$(node --version)
     print_success "Node.js found: $NODE_VERSION"
 fi
 
-# Step 2: Check npm
-print_step "2" "Checking for npm"
-
+# Check for npm
+print_info "Checking for npm..."
 if ! command -v npm &> /dev/null; then
-    print_warning "npm not found (should come with Node.js)"
-    
-    # Try reinstalling Node.js which includes npm
-    if [[ -f /etc/debian_version ]]; then
-        echo "📦 Reinstalling Node.js with npm..."
-        sudo apt-get install -y nodejs npm
-    elif [[ -f /etc/redhat-release ]]; then
-        sudo dnf install -y nodejs npm
-    fi
-    
-    # Verify npm is now available
-    if ! command -v npm &> /dev/null; then
-        print_error "npm installation failed. Please install manually."
-        exit 1
-    fi
+    print_warning "npm not found - will be installed with Node.js"
+    NEEDS_NODEJS=true
+else
+    NPM_VERSION=$(npm --version)
+    print_success "npm found: $NPM_VERSION"
 fi
 
-NPM_VERSION=$(npm --version)
-print_success "npm found: $NPM_VERSION"
-
-# Step 3: Check/Install Git
-print_step "3" "Checking for Git"
-
+# Check for Git
+print_info "Checking for Git..."
 if ! command -v git &> /dev/null; then
-    print_warning "Git not found. Installing Git..."
-    
-    # Detect OS and install Git
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        if command -v brew &> /dev/null; then
-            brew install git
-            print_success "Git installed via Homebrew"
-        else
-            print_warning "Install Xcode Command Line Tools for Git"
-            xcode-select --install
-        fi
-    elif [[ -f /etc/debian_version ]]; then
-        # Debian/Ubuntu
-        sudo apt-get update
-        sudo apt-get install -y git
-        print_success "Git installed successfully"
-    elif [[ -f /etc/redhat-release ]]; then
-        # RHEL/Fedora
-        sudo dnf install -y git
-        print_success "Git installed successfully"
-    else
-        print_warning "Could not auto-install Git. Recommended but not required."
-    fi
-    
-    # Verify installation
-    if command -v git &> /dev/null; then
-        GIT_VERSION=$(git --version)
-        print_success "Git installed: $GIT_VERSION"
-    else
-        print_warning "Git not installed - recommended for version control but not required"
+    print_warning "Git not found - will be installed (recommended)"
+    NEEDS_GIT=true
+    if [[ "$OS_TYPE" == "debian" ]] || [[ "$OS_TYPE" == "redhat" ]]; then
+        MISSING_PACKAGES+=("git")
     fi
 else
     GIT_VERSION=$(git --version)
     print_success "Git found: $GIT_VERSION"
 fi
 
-# Step 4: Check/Install Docker
-print_step "4" "Checking for Docker"
-
+# Check for Docker
+print_info "Checking for Docker..."
 if ! command -v docker &> /dev/null; then
-    print_warning "Docker not found. Installing Docker..."
-    echo ""
-    
-    # Detect OS
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        print_error "On macOS, please install Docker Desktop manually:"
-        echo "  Download from: https://www.docker.com/products/docker-desktop"
-        echo "  Or with Homebrew: brew install --cask docker"
-        exit 1
-    elif [[ -f /etc/debian_version ]]; then
-        # Debian/Ubuntu
-        echo "📦 Installing Docker on Debian/Ubuntu..."
-        
-        # Update package index
-        sudo apt-get update
-        
-        # Install prerequisites
-        sudo apt-get install -y ca-certificates curl gnupg lsb-release
-        
-        # Add Docker's official GPG key
-        sudo mkdir -p /etc/apt/keyrings
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-        
-        # Set up repository
-        echo \
-          "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-          $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-        
-        # Install Docker
-        sudo apt-get update
-        sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-        
-        # Add current user to docker group
-        sudo usermod -aG docker $USER
-        
-        print_success "Docker installed successfully"
-        print_warning "You may need to log out and back in for docker group permissions to take effect"
-        
-        # Start Docker service
-        sudo systemctl start docker
-        sudo systemctl enable docker
-        
-    elif [[ -f /etc/redhat-release ]]; then
-        # RHEL/Fedora/CentOS
-        echo "📦 Installing Docker on RHEL/Fedora..."
-        sudo dnf -y install dnf-plugins-core
-        sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
-        sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-        
-        sudo systemctl start docker
-        sudo systemctl enable docker
-        sudo usermod -aG docker $USER
-        
-        print_success "Docker installed successfully"
-    else
-        # Unknown OS - use universal script
-        print_warning "Unknown OS. Attempting universal Docker install..."
-        curl -fsSL https://get.docker.com -o get-docker.sh
-        sudo sh get-docker.sh
-        sudo usermod -aG docker $USER
-        rm get-docker.sh
-        print_success "Docker installed successfully"
-    fi
+    print_warning "Docker not found - will be installed"
+    NEEDS_DOCKER=true
 else
     DOCKER_VERSION=$(docker --version)
     print_success "Docker found: $DOCKER_VERSION"
 fi
 
-# Step 5: Check Docker Compose
-print_step "5" "Checking for Docker Compose"
-
+# Check for Docker Compose
+print_info "Checking for Docker Compose..."
 if ! command -v docker-compose &> /dev/null; then
-    # Check if docker compose (v2) is available
-    if docker compose version &> /dev/null; then
-        print_success "Using 'docker compose' (v2)"
-        COMPOSE_CMD="docker compose"
+    if ! docker compose version &> /dev/null 2>&1; then
+        print_warning "Docker Compose not found - will be installed"
     else
-        print_warning "Docker Compose not found. Installing..."
-        
-        # Install docker-compose standalone
-        sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-        sudo chmod +x /usr/local/bin/docker-compose
-        
-        print_success "Docker Compose installed"
-        COMPOSE_CMD="docker-compose"
+        print_success "Docker Compose v2 found (docker compose)"
+        COMPOSE_CMD="docker compose"
     fi
 else
-    DOCKER_COMPOSE_VERSION=$(docker-compose --version)
-    print_success "Docker Compose found: $DOCKER_COMPOSE_VERSION"
+    COMPOSE_VERSION=$(docker-compose --version)
+    print_success "Docker Compose found: $COMPOSE_VERSION"
     COMPOSE_CMD="docker-compose"
 fi
 
-# Step 6: Check/Install PostgreSQL
-print_step "6" "Checking for PostgreSQL"
-
+# Check for PostgreSQL
+print_info "Checking for PostgreSQL..."
 if ! command -v psql &> /dev/null; then
-    print_warning "PostgreSQL not found. Installing PostgreSQL..."
-    echo ""
-    
-    # Detect OS and install PostgreSQL
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        print_warning "On macOS, installing PostgreSQL via Homebrew..."
-        if command -v brew &> /dev/null; then
-            brew install postgresql@15
-            brew services start postgresql@15
-            print_success "PostgreSQL installed and started"
-        else
-            print_error "Homebrew not found. Install from: https://brew.sh/"
-            print_warning "Or install PostgreSQL from: https://www.postgresql.org/download/macosx/"
-            echo "Note: Docker setup includes PostgreSQL, so you can skip this."
-        fi
-        
-    elif [[ -f /etc/debian_version ]]; then
-        # Debian/Ubuntu
-        echo "📦 Installing PostgreSQL on Debian/Ubuntu..."
-        
-        sudo apt-get update
-        sudo apt-get install -y postgresql postgresql-contrib
-        
-        # Start PostgreSQL service
-        sudo systemctl start postgresql
-        sudo systemctl enable postgresql
-        
-        print_success "PostgreSQL installed and started"
-        
-    elif [[ -f /etc/redhat-release ]]; then
-        # RHEL/Fedora/CentOS
-        echo "📦 Installing PostgreSQL on RHEL/Fedora..."
-        
-        sudo dnf install -y postgresql-server postgresql-contrib
-        sudo postgresql-setup --initdb
-        sudo systemctl start postgresql
-        sudo systemctl enable postgresql
-        
-        print_success "PostgreSQL installed and started"
-    else
-        print_warning "Unknown OS. Please install PostgreSQL manually."
-        echo "Or use Docker setup which includes PostgreSQL."
-    fi
+    print_warning "PostgreSQL not found - will be installed"
+    NEEDS_POSTGRESQL=true
 else
     PSQL_VERSION=$(psql --version)
     print_success "PostgreSQL found: $PSQL_VERSION"
 fi
 
-# Step 6.5: Configure PostgreSQL database and user
-print_step "6.5" "Configuring PostgreSQL database"
+echo ""
+print_step "Phase 2: Installing Missing Dependencies"
+echo ""
+
+# Only proceed if there's something to install
+if [ "$NEEDS_NODEJS" = true ] || [ "$NEEDS_DOCKER" = true ] || [ "$NEEDS_POSTGRESQL" = true ] || [ "${#MISSING_PACKAGES[@]}" -gt 0 ]; then
+    
+    if [[ "$OS_TYPE" == "debian" ]]; then
+        # Ubuntu/Debian - batch installation
+        echo "📦 Preparing to install missing packages on Ubuntu/Debian..."
+        echo ""
+        
+        # Run apt-get update once
+        print_info "Updating package lists..."
+        sudo apt-get update
+        print_success "Package lists updated"
+        echo ""
+        
+        # Install basic packages first (curl, git, etc.)
+        if [ "${#MISSING_PACKAGES[@]}" -gt 0 ]; then
+            print_info "Installing: ${MISSING_PACKAGES[*]}"
+            sudo apt-get install -y "${MISSING_PACKAGES[@]}"
+            print_success "Basic packages installed"
+            echo ""
+        fi
+        
+        # Install Node.js if needed
+        if [ "$NEEDS_NODEJS" = true ]; then
+            print_info "Installing Node.js 20.x LTS..."
+            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+            sudo apt-get install -y nodejs
+            NODE_VERSION=$(node --version)
+            print_success "Node.js $NODE_VERSION installed"
+            NPM_VERSION=$(npm --version)
+            print_success "npm $NPM_VERSION installed"
+            echo ""
+        fi
+        
+        # Install Docker if needed
+        if [ "$NEEDS_DOCKER" = true ]; then
+            print_info "Installing Docker..."
+            
+            # Install prerequisites
+            sudo apt-get install -y ca-certificates gnupg lsb-release
+            
+            # Add Docker's official GPG key
+            sudo mkdir -p /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+            
+            # Set up repository
+            echo \
+              "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+              $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+            
+            # Install Docker (single update and install)
+            sudo apt-get update
+            sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            
+            # Start Docker and add user to docker group
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            sudo usermod -aG docker $USER
+            
+            DOCKER_VERSION=$(docker --version)
+            print_success "Docker installed: $DOCKER_VERSION"
+            print_warning "You may need to log out and back in for docker group permissions"
+            echo ""
+            
+            # Set compose command
+            if docker compose version &> /dev/null 2>&1; then
+                COMPOSE_CMD="docker compose"
+            else
+                COMPOSE_CMD="docker-compose"
+            fi
+        fi
+        
+        # Install PostgreSQL if needed
+        if [ "$NEEDS_POSTGRESQL" = true ]; then
+            print_info "Installing PostgreSQL..."
+            sudo apt-get install -y postgresql postgresql-contrib
+            
+            # Start PostgreSQL
+            sudo systemctl start postgresql
+            sudo systemctl enable postgresql
+            
+            PSQL_VERSION=$(psql --version)
+            print_success "PostgreSQL installed: $PSQL_VERSION"
+            echo ""
+        fi
+        
+    elif [[ "$OS_TYPE" == "redhat" ]]; then
+        # RHEL/Fedora/CentOS - batch installation
+        echo "📦 Preparing to install missing packages on RHEL/Fedora..."
+        echo ""
+        
+        # Install basic packages
+        if [ "${#MISSING_PACKAGES[@]}" -gt 0 ]; then
+            print_info "Installing: ${MISSING_PACKAGES[*]}"
+            sudo dnf install -y "${MISSING_PACKAGES[@]}"
+            print_success "Basic packages installed"
+            echo ""
+        fi
+        
+        # Install Node.js if needed
+        if [ "$NEEDS_NODEJS" = true ]; then
+            print_info "Installing Node.js 20.x LTS..."
+            curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+            sudo dnf install -y nodejs
+            NODE_VERSION=$(node --version)
+            print_success "Node.js $NODE_VERSION installed"
+            echo ""
+        fi
+        
+        # Install Docker if needed
+        if [ "$NEEDS_DOCKER" = true ]; then
+            print_info "Installing Docker..."
+            sudo dnf -y install dnf-plugins-core
+            sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+            sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+            
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            sudo usermod -aG docker $USER
+            
+            DOCKER_VERSION=$(docker --version)
+            print_success "Docker installed: $DOCKER_VERSION"
+            echo ""
+        fi
+        
+        # Install PostgreSQL if needed
+        if [ "$NEEDS_POSTGRESQL" = true ]; then
+            print_info "Installing PostgreSQL..."
+            sudo dnf install -y postgresql-server postgresql-contrib
+            sudo postgresql-setup --initdb
+            sudo systemctl start postgresql
+            sudo systemctl enable postgresql
+            
+            PSQL_VERSION=$(psql --version)
+            print_success "PostgreSQL installed: $PSQL_VERSION"
+            echo ""
+        fi
+        
+    elif [[ "$OS_TYPE" == "macos" ]]; then
+        # macOS - using Homebrew
+        echo "📦 Preparing to install missing packages on macOS..."
+        echo ""
+        
+        # Check/Install Homebrew
+        if ! command -v brew &> /dev/null; then
+            print_warning "Homebrew not found. Installing Homebrew..."
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            print_success "Homebrew installed"
+        fi
+        
+        # Build list of packages to install
+        BREW_PACKAGES=()
+        [ "$NEEDS_NODEJS" = true ] && BREW_PACKAGES+=("node")
+        [ "$NEEDS_GIT" = true ] && BREW_PACKAGES+=("git")
+        [ "$NEEDS_POSTGRESQL" = true ] && BREW_PACKAGES+=("postgresql@15")
+        
+        # Install all at once
+        if [ "${#BREW_PACKAGES[@]}" -gt 0 ]; then
+            print_info "Installing: ${BREW_PACKAGES[*]}"
+            brew install "${BREW_PACKAGES[@]}"
+            print_success "Packages installed via Homebrew"
+            
+            # Start PostgreSQL if installed
+            if [ "$NEEDS_POSTGRESQL" = true ]; then
+                brew services start postgresql@15
+            fi
+        fi
+        
+        # Docker on macOS requires Docker Desktop
+        if [ "$NEEDS_DOCKER" = true ]; then
+            print_warning "Docker on macOS requires Docker Desktop"
+            print_info "Download from: https://www.docker.com/products/docker-desktop"
+            echo "After installing Docker Desktop, re-run this script."
+            exit 1
+        fi
+    else
+        print_error "Unknown OS. Cannot auto-install packages."
+        echo "Please install manually: Node.js, Docker, PostgreSQL, Git"
+        exit 1
+    fi
+    
+    print_success "All system dependencies installed!"
+    
+else
+    print_success "All system dependencies already installed!"
+fi
+
+# Determine Docker Compose command
+if command -v docker-compose &> /dev/null; then
+    COMPOSE_CMD="docker-compose"
+elif docker compose version &> /dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+else
+    print_error "Docker Compose not found!"
+    echo "This should have been installed with Docker. Please check your Docker installation."
+    exit 1
+fi
+
+print_info "Using Docker Compose command: $COMPOSE_CMD"
+
+echo ""
+print_step "Phase 3: Configuring PostgreSQL Database"
+echo ""
 
 if command -v psql &> /dev/null; then
     echo "🔧 Setting up database and user..."
@@ -406,8 +424,9 @@ else
     echo "If using Docker deployment, PostgreSQL will be configured automatically"
 fi
 
-# Step 7: Setup environment
-print_step "7" "Setting up environment variables"
+echo ""
+print_step "Phase 4: Setting up environment variables"
+echo ""
 
 if [ ! -f .env ]; then
     echo "📝 Creating .env file from template..."
@@ -469,8 +488,11 @@ else
     fi
 fi
 
-# Step 8: Install backend dependencies
-print_step "8" "Installing backend dependencies"
+echo ""
+print_step "Phase 5: Installing dependencies"
+echo ""
+
+print_info "Installing backend dependencies..."
 
 if [ -d backend/node_modules ]; then
     print_success "Backend dependencies already installed"
@@ -482,8 +504,7 @@ else
     print_success "Backend dependencies installed"
 fi
 
-# Step 9: Install frontend dependencies
-print_step "9" "Installing frontend dependencies"
+print_info "Installing frontend dependencies..."
 
 if [ -d frontend/node_modules ]; then
     print_success "Frontend dependencies already installed"
@@ -495,16 +516,18 @@ else
     print_success "Frontend dependencies installed"
 fi
 
-# Step 10: Build Docker images
-print_step "10" "Building Docker images"
+echo ""
+print_step "Phase 6: Building Docker images"
+echo ""
 
 echo "🔨 Building Docker images (this may take a few minutes)..."
 $COMPOSE_CMD build
 
 print_success "Docker images built successfully"
 
-# Step 11: Deploy application
-print_step "11" "Deploying application"
+echo ""
+print_step "Phase 7: Deploying application"
+echo ""
 
 echo "🚀 Starting containers..."
 $COMPOSE_CMD up -d
