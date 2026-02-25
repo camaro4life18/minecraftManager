@@ -57,13 +57,19 @@ Your application has been created and is ready to use in two ways:
 setup.bat
 ```
 
-**On Mac/Linux:**
+**On Mac/Linux (Fully Automated):**
 ```bash
 chmod +x setup.sh
 ./setup.sh
 ```
 
-**Or manually:**
+✅ **On Ubuntu/Debian:** The script automatically:
+- Installs Docker (if needed)
+- Installs PostgreSQL (if needed)
+- Configures the database with secure credentials
+- Deploys the app!
+
+**Or manually with Docker:**
 ```bash
 docker-compose up -d
 ```

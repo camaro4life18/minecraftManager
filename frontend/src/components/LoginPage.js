@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import PasswordReset from './PasswordReset';
 import '../styles/LoginPage.css';
 
 function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showPasswordReset, setShowPasswordReset] = useState(false);
   const { login, error, setError } = useAuth();
 
   const handleSubmit = async (e) => {
@@ -24,6 +26,10 @@ function LoginPage() {
       setIsLoading(false);
     }
   };
+
+  if (showPasswordReset) {
+    return <PasswordReset onBack={() => setShowPasswordReset(false)} />;
+  }
 
   return (
     <div className="login-container">
@@ -65,6 +71,12 @@ function LoginPage() {
           >
             {isLoading ? 'Logging in...' : 'Login'}
           </button>
+
+          <div className="forgot-password">
+            <a href="#" onClick={(e) => { e.preventDefault(); setShowPasswordReset(true); }}>
+              Forgot password?
+            </a>
+          </div>
         </form>
 
         <div className="login-info">

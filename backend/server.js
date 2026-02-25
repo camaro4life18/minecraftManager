@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+import rateLimit from 'express-rate-limit';
+import swaggerUi from 'swagger-ui-express';
 import ProxmoxClient from './proxmoxClient.js';
 import VelocityClient from './velocityClient.js';
 import { 
@@ -10,7 +13,11 @@ import {
   Session,
   ServerCloneLog,
   ManagedServer,
-  AppConfig
+  AppConfig,
+  ErrorLog,
+  PasswordResetToken,
+  ApiMetric,
+  pool
 } from './database.js';
 import { 
   generateToken, 
@@ -21,11 +28,27 @@ import {
   canCloneServer,
   canStartStop
 } from './auth.js';
+import { errorHandler, metricsMiddleware } from './middleware.js';
+import { swaggerSpec } from './swagger.js';
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5000;
+
+// Rate limiting configurations
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.'
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Limit each IP to 5 login requests per windowMs
+  message: 'Too many login attempts, please try again later.',
+  skipSuccessfulRequests: true
+});
 
 // Initialize database and start server
 async function startServer() {
@@ -53,13 +76,44 @@ async function startServer() {
     // Middleware
     app.use(cors());
     app.use(express.json());
+    app.use(metricsMiddleware); // Track API metrics
+    app.use('/api/', generalLimiter); // Apply rate limiting to all API routes
+
+    // ============================================
+    // API DOCUMENTATION
+    // ============================================
+
+    // Swagger API documentation
+    app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
     // ============================================
     // AUTHENTICATION ROUTES (No auth required)
     // ============================================
 
+    /**
+     * @swagger
+     * /api/auth/login:
+     *   post:
+     *     summary: Login to get JWT token
+     *     tags: [Authentication]
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             $ref: '#/components/schemas/LoginRequest'
+     *     responses:
+     *       200:
+     *         description: Login successful
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/LoginResponse'
+     *       401:
+     *         description: Invalid credentials
+     */
     // Login endpoint
-    app.post('/api/auth/login', async (req, res) => {
+    app.post('/api/auth/login', authLimiter, async (req, res) => {
       try {
         const { username, password } = req.body;
 
@@ -134,8 +188,93 @@ async function startServer() {
     });
 
     // Logout endpoint
-    app.post('/api/auth/logout', verifyToken, (req, res) => {
-      res.json({ success: true });
+    app.post('/api/auth/logout', verifyToken, async (req, res) => {
+      try {
+        // Optionally revoke the session token if tracking in DB
+        // await Session.revoke(req.headers.authorization?.split(' ')[1]);
+        res.json({ success: true });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Request password reset
+    app.post('/api/auth/request-reset', authLimiter, async (req, res) => {
+      try {
+        const { email } = req.body;
+
+        if (!email) {
+          return res.status(400).json({ error: 'Email is required' });
+        }
+
+        const user = await User.findByEmail(email);
+        if (!user) {
+          // Don't reveal whether email exists for security
+          return res.json({ 
+            success: true, 
+            message: 'If an account with that email exists, a password reset link has been sent.' 
+          });
+        }
+
+        // Generate reset token
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        const expiresAt = new Date(Date.now() + 3600000); // 1 hour from now
+
+        await PasswordResetToken.create(user.id, resetToken, expiresAt);
+
+        // In production, send email here
+        // For now, return the token (REMOVE THIS IN PRODUCTION)
+        console.log(`Password reset token for ${email}: ${resetToken}`);
+        
+        res.json({ 
+          success: true, 
+          message: 'If an account with that email exists, a password reset link has been sent.',
+          // REMOVE IN PRODUCTION:
+          resetToken: process.env.NODE_ENV === 'development' ? resetToken : undefined
+        });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Reset password with token
+    app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
+      try {
+        const { token, newPassword } = req.body;
+
+        if (!token || !newPassword) {
+          return res.status(400).json({ error: 'Token and new password are required' });
+        }
+
+        if (newPassword.length < 6) {
+          return res.status(400).json({ error: 'Password must be at least 6 characters' });
+        }
+
+        const resetToken = await PasswordResetToken.findByToken(token);
+        if (!resetToken) {
+          return res.status(400).json({ error: 'Invalid or expired reset token' });
+        }
+
+        // Hash new password
+        const passwordHash = await bcrypt.hash(newPassword, 10);
+
+        // Update user password
+        const user = await User.findById(resetToken.user_id);
+        await pool.query(
+          'UPDATE users SET password_hash = $1 WHERE id = $2',
+          [passwordHash, user.id]
+        );
+
+        // Mark token as used
+        await PasswordResetToken.markAsUsed(token);
+
+        // Revoke all existing sessions for security
+        await Session.revokeAllForUser(user.id);
+
+        res.json({ success: true, message: 'Password reset successful' });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
     });
 
     // Get current user
@@ -199,6 +338,137 @@ async function startServer() {
 
         await User.updateRole(parseInt(req.params.userId), role);
         res.json({ success: true });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // ============================================
+    // SESSION MANAGEMENT ROUTES (Admin only)
+    // ============================================
+
+    // Get all active sessions
+    app.get('/api/admin/sessions', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const result = await pool.query(
+          'SELECT s.id, s.user_id, s.created_at, s.expires_at, u.username FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.expires_at > CURRENT_TIMESTAMP ORDER BY s.created_at DESC'
+        );
+        res.json(result.rows);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Revoke specific session
+    app.delete('/api/admin/sessions/:sessionId', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        await pool.query('DELETE FROM sessions WHERE id = $1', [parseInt(req.params.sessionId)]);
+        res.json({ success: true });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Revoke all sessions for a user
+    app.delete('/api/admin/users/:userId/sessions', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        await Session.revokeAllForUser(parseInt(req.params.userId));
+        res.json({ success: true });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // ============================================
+    // ERROR LOG ROUTES (Admin only)
+    // ============================================
+
+    // Get error logs with pagination and filtering
+    app.get('/api/admin/error-logs', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 50;
+        const offset = (page - 1) * limit;
+
+        const filters = {};
+        if (req.query.errorType) filters.errorType = req.query.errorType;
+        if (req.query.userId) filters.userId = parseInt(req.query.userId);
+        if (req.query.startDate) filters.startDate = req.query.startDate;
+        if (req.query.endDate) filters.endDate = req.query.endDate;
+
+        const [logs, total] = await Promise.all([
+          ErrorLog.getAll(limit, offset, filters),
+          ErrorLog.getCount(filters)
+        ]);
+
+        res.json({
+          logs,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
+        });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get error log statistics
+    app.get('/api/admin/error-logs/stats', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const hours = parseInt(req.query.hours) || 24;
+        const result = await pool.query(
+          `SELECT error_type, COUNT(*) as count 
+           FROM error_logs 
+           WHERE created_at > NOW() - INTERVAL '${hours} hours' 
+           GROUP BY error_type 
+           ORDER BY count DESC`
+        );
+        res.json(result.rows);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Clear old error logs
+    app.delete('/api/admin/error-logs/cleanup', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const days = parseInt(req.query.days) || 30;
+        await ErrorLog.deleteOlderThan(days);
+        res.json({ success: true, message: `Deleted logs older than ${days} days` });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // ============================================
+    // API METRICS ROUTES (Admin only)
+    // ============================================
+
+    // Get API metrics
+    app.get('/api/admin/metrics', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const hours = parseInt(req.query.hours) || 24;
+        const endpoint = req.query.endpoint || null;
+
+        const stats = await ApiMetric.getStats(endpoint, hours);
+        
+        // Get endpoint breakdown
+        const endpointStats = await pool.query(
+          `SELECT endpoint, COUNT(*) as count, AVG(response_time) as avg_time 
+           FROM api_metrics 
+           WHERE created_at > NOW() - INTERVAL '${hours} hours' 
+           GROUP BY endpoint 
+           ORDER BY count DESC 
+           LIMIT 20`
+        );
+
+        res.json({
+          overall: stats,
+          byEndpoint: endpointStats.rows
+        });
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
@@ -334,10 +604,62 @@ async function startServer() {
     // SERVER MANAGEMENT ROUTES (Auth required)
     // ============================================
 
-    // Get all servers (protected) - includes creator info and seed
+    /**
+     * @swagger
+     * /api/servers:
+     *   get:
+     *     summary: Get all servers with pagination and filtering
+     *     tags: [Servers]
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: query
+     *         name: page
+     *         schema:
+     *           type: integer
+     *         description: Page number (default 1)
+     *       - in: query
+     *         name: limit
+     *         schema:
+     *           type: integer
+     *         description: Items per page (default 20)
+     *       - in: query
+     *         name: search
+     *         schema:
+     *           type: string
+     *         description: Search by server name
+     *       - in: query
+     *         name: status
+     *         schema:
+     *           type: string
+     *         description: Filter by status (running/stopped)
+     *       - in: query
+     *         name: sortBy
+     *         schema:
+     *           type: string
+     *         description: Sort by field (name/vmid/status)
+     *       - in: query
+     *         name: sortOrder
+     *         schema:
+     *           type: string
+     *         description: Sort order (asc/desc)
+     *     responses:
+     *       200:
+     *         description: List of servers
+     */
+    // Get all servers (protected) - includes creator info, seed, pagination, and filtering
     app.get('/api/servers', verifyToken, async (req, res) => {
       try {
-        const servers = await proxmox.getServers();
+        // Get query parameters
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const search = req.query.search || '';
+        const statusFilter = req.query.status || '';
+        const sortBy = req.query.sortBy || 'vmid';
+        const sortOrder = req.query.sortOrder || 'asc';
+
+        // Get all servers from Proxmox
+        let servers = await proxmox.getServers();
         
         // Enrich servers with creator information and seed
         const enrichedServers = await Promise.all(
@@ -352,8 +674,57 @@ async function startServer() {
             };
           })
         );
-        
-        res.json(enrichedServers);
+
+        // Apply filters
+        let filteredServers = enrichedServers;
+
+        // Search filter (by name)
+        if (search) {
+          filteredServers = filteredServers.filter(server =>
+            server.name.toLowerCase().includes(search.toLowerCase())
+          );
+        }
+
+        // Status filter
+        if (statusFilter) {
+          filteredServers = filteredServers.filter(server =>
+            server.status === statusFilter
+          );
+        }
+
+        // Sort servers
+        filteredServers.sort((a, b) => {
+          let aVal = a[sortBy];
+          let bVal = b[sortBy];
+
+          // Handle string comparisons
+          if (typeof aVal === 'string') {
+            aVal = aVal.toLowerCase();
+            bVal = bVal.toLowerCase();
+          }
+
+          if (sortOrder === 'desc') {
+            return aVal > bVal ? -1 : aVal < bVal ? 1 : 0;
+          } else {
+            return aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
+          }
+        });
+
+        // Calculate pagination
+        const total = filteredServers.length;
+        const totalPages = Math.ceil(total / limit);
+        const offset = (page - 1) * limit;
+        const paginatedServers = filteredServers.slice(offset, offset + limit);
+
+        res.json({
+          servers: paginatedServers,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages
+          }
+        });
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
@@ -524,9 +895,13 @@ async function startServer() {
       res.json({ status: 'healthy' });
     });
 
+    // Global error handler (must be last)
+    app.use(errorHandler);
+
     // Start listening
     app.listen(port, () => {
       console.log(`✓ Minecraft Server Manager API running on port ${port}`);
+      console.log(`✓ API Documentation available at http://localhost:${port}/api-docs`);
     });
   } catch (error) {
     console.error('✗ Failed to start server:', error);

@@ -1,8 +1,84 @@
 /* Server List Styles */
-.server-list h2 {
+.server-list-header {
+  margin-bottom: 1.5rem;
+}
+
+.server-list h2, .server-list-header h2 {
   margin-bottom: 1.5rem;
   font-size: 1.8rem;
   color: #e0e0e0;
+}
+
+.server-controls {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.search-box input,
+.filter-box select,
+.sort-box select {
+  padding: 0.6rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(30, 60, 114, 0.3);
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 0.9rem;
+  min-width: 200px;
+}
+
+.search-box input:focus,
+.filter-box select:focus,
+.sort-box select:focus {
+  outline: none;
+  border-color: rgba(0, 123, 255, 0.5);
+  background: rgba(30, 60, 114, 0.5);
+}
+
+.search-box input::placeholder {
+  color: #999;
+}
+
+.results-info {
+  margin-bottom: 1rem;
+  color: #b0b0b0;
+  font-size: 0.9rem;
+}
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1.5rem;
+  margin-top: 2rem;
+  padding: 1.5rem;
+}
+
+.pagination button {
+  padding: 0.6rem 1.2rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(30, 60, 114, 0.3);
+  color: #e0e0e0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.3s;
+  font-size: 0.9rem;
+}
+
+.pagination button:not(:disabled):hover {
+  background: rgba(0, 123, 255, 0.4);
+  border-color: rgba(0, 123, 255, 0.6);
+}
+
+.pagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.page-info {
+  color: #e0e0e0;
+  font-size: 0.95rem;
 }
 
 .servers-grid {

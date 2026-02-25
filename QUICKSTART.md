@@ -39,15 +39,17 @@ PROXMOX_REALM=pam
 
 ### Step 3: Start (Choose One)
 
-**Using Setup Script (Easy)**
+**Using Setup Script (Fully Automated)**
 ```bash
 # Windows
 setup.bat
 
-# Mac/Linux
+# Mac/Linux (auto-installs Docker + PostgreSQL + deploys)
 chmod +x setup.sh
 ./setup.sh
 ```
+
+✅ **On Ubuntu/Debian:** The script installs Docker + PostgreSQL, configures the database, and deploys automatically!
 
 **Or Manual**
 ```bash

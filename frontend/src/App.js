@@ -3,6 +3,9 @@ import ServerList from './components/ServerList';
 import CloneForm from './components/CloneForm';
 import LoginPage from './components/LoginPage';
 import AdminSettings from './components/AdminSettings';
+import ErrorLogs from './components/ErrorLogs';
+import ApiMetrics from './components/ApiMetrics';
+import SessionManagement from './components/SessionManagement';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import './App.css';
 
@@ -14,8 +17,15 @@ function AppContent() {
   const [error, setError] = useState(null);
   const [showCloneForm, setShowCloneForm] = useState(false);
   const [selectedServer, setSelectedServer] = useState(null);
-  const [currentPage, setCurrentPage] = useState('servers'); // 'servers' or 'admin'
+  const [currentPage, setCurrentPage] = useState('servers'); // 'servers' or 'admin' or 'logs' or 'metrics' or 'sessions'
   const { isAuthenticated, token, logout, isAdmin, user, loading: authLoading } = useAuth();
+
+  // Pagination and filtering state
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [sortBy, setSortBy] = useState('vmid');
 
   // Fetch servers
   const fetchServers = async () => {
@@ -23,14 +33,32 @@ function AppContent() {
 
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE}/api/servers`, {
+      const queryParams = new URLSearchParams({
+        page: page.toString(),
+        limit: '20',
+        ...(searchTerm && { search: searchTerm }),
+        ...(statusFilter && { status: statusFilter }),
+        sortBy,
+        sortOrder: 'asc'
+      });
+
+      const response = await fetch(`${API_BASE}/api/servers?${queryParams}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
       if (!response.ok) throw new Error('Failed to fetch servers');
       const data = await response.json();
-      setServers(data);
+      
+      // Handle both old format (array) and new format (object with servers and pagination)
+      if (Array.isArray(data)) {
+        setServers(data);
+        setPagination(null);
+      } else {
+        setServers(data.servers || []);
+        setPagination(data.pagination || null);
+      }
+      
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -46,7 +74,7 @@ function AppContent() {
       const interval = setInterval(fetchServers, 10000);
       return () => clearInterval(interval);
     }
-  }, [isAuthenticated, token, authLoading]);
+  }, [isAuthenticated, token, authLoading, page, searchTerm, statusFilter, sortBy]);
 
   if (authLoading) {
     return <div className="loading">Loading...</div>;
@@ -133,12 +161,32 @@ function AppContent() {
                 🖥️ Servers
               </button>
               {isAdmin && (
-                <button
-                  className={`nav-button ${currentPage === 'admin' ? 'active' : ''}`}
-                  onClick={() => setCurrentPage('admin')}
-                >
-                  ⚙️ Configuration
-                </button>
+                <>
+                  <button
+                    className={`nav-button ${currentPage === 'admin' ? 'active' : ''}`}
+                    onClick={() => setCurrentPage('admin')}
+                  >
+                    ⚙️ Configuration
+                  </button>
+                  <button
+                    className={`nav-button ${currentPage === 'logs' ? 'active' : ''}`}
+                    onClick={() => setCurrentPage('logs')}
+                  >
+                    📋 Error Logs
+                  </button>
+                  <button
+                    className={`nav-button ${currentPage === 'metrics' ? 'active' : ''}`}
+                    onClick={() => setCurrentPage('metrics')}
+                  >
+                    📊 Metrics
+                  </button>
+                  <button
+                    className={`nav-button ${currentPage === 'sessions' ? 'active' : ''}`}
+                    onClick={() => setCurrentPage('sessions')}
+                  >
+                    🔐 Sessions
+                  </button>
+                </>
               )}
             </nav>
             <div className="header-user">
@@ -169,6 +217,14 @@ function AppContent() {
                   onDelete={handleDeleteServer}
                   isAdmin={isAdmin}
                   currentUserId={user?.id}
+                  pagination={pagination}
+                  onPageChange={setPage}
+                  searchTerm={searchTerm}
+                  onSearchChange={setSearchTerm}
+                  statusFilter={statusFilter}
+                  onStatusFilterChange={setStatusFilter}
+                  sortBy={sortBy}
+                  onSortByChange={setSortBy}
                 />
 
                 {showCloneForm && selectedServer && (
@@ -192,10 +248,27 @@ function AppContent() {
             isAdmin={isAdmin}
           />
         )}
+
+        {currentPage === 'logs' && isAdmin && (
+          <ErrorLogs />
+        )}
+
+        {currentPage === 'metrics' && isAdmin && (
+          <ApiMetrics />
+        )}
+
+        {currentPage === 'sessions' && isAdmin && (
+          <SessionManagement />
+        )}
       </main>
 
       <footer className="footer">
         <p>Minecraft Server Manager - Managing servers made easy</p>
+        <p className="api-docs-link">
+          <a href={`${API_BASE}/api-docs`} target="_blank" rel="noopener noreferrer">
+            📚 API Documentation
+          </a>
+        </p>
       </footer>
     </div>
   );

@@ -1,5 +1,9 @@
 # Documentation Index
 
+**Last Updated:** February 24, 2026 (Version 2.0)
+
+**📋 Documentation Status:** See [DOCUMENTATION_STATUS.md](DOCUMENTATION_STATUS.md) for complete overview
+
 **Start here:** [START_HERE.md](START_HERE.md) - 3-step quick setup
 
 ---
@@ -11,7 +15,16 @@
 |----------|----------|------|
 | [START_HERE.md](START_HERE.md) | First-time setup | 2 min |
 | [QUICKSTART.md](QUICKSTART.md) | 5-minute deployment | 5 min |
+| [INSTALL_GUIDE.md](INSTALL_GUIDE.md) | Detailed installation | 10 min |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Local development | 10 min |
+
+### 🆕 Version 2.0 Features
+| Document | Best For | Time |
+|----------|----------|------|
+| [NEW_FEATURES_GUIDE.md](NEW_FEATURES_GUIDE.md) | Learn new features | 10 min |
+| [MIGRATION_GUIDE_V2.md](MIGRATION_GUIDE_V2.md) | Upgrade from v1.0 | 15 min |
+| [IMPLEMENTATION_COMPLETE.md](IMPLEMENTATION_COMPLETE.md) | Technical details | 20 min |
+| [CHECKLIST.md](CHECKLIST.md) | Quick reference | 5 min |
 
 ### 🚀 Deployment & Operations
 | Document | Best For | Time |
@@ -19,6 +32,7 @@
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Docker deployment | 20 min |
 | [README.md](README.md) | Full reference | As needed |
 | [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) | Understanding file layout | 5 min |
+| [DOCUMENTATION_STATUS.md](DOCUMENTATION_STATUS.md) | Documentation overview | 5 min |
 
 ### 🐛 Troubleshooting
 | Problem | Solution |
