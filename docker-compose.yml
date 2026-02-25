@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: minecraft-manager-postgres
+    environment:
+      - POSTGRES_USER=${DB_USER:-minecraft_user}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-minecraft_password}
+      - POSTGRES_DB=${DB_NAME:-minecraft_manager}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - minecraft-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-minecraft_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: minecraft-manager-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=${DB_USER:-minecraft_user}
+      - DB_PASSWORD=${DB_PASSWORD:-minecraft_password}
+      - DB_NAME=${DB_NAME:-minecraft_manager}
+      - PROXMOX_HOST=${PROXMOX_HOST}
+      - PROXMOX_USERNAME=${PROXMOX_USERNAME}
+      - PROXMOX_PASSWORD=${PROXMOX_PASSWORD}
+      - PROXMOX_REALM=${PROXMOX_REALM:-pam}
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - minecraft-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: minecraft-manager-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://backend:5000
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - minecraft-network
+
+networks:
+  minecraft-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
