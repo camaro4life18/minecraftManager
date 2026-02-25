@@ -1763,30 +1763,29 @@ async function startServer() {
         const data = await response.json();
         const versionNumbers = data.versions.slice(-20).reverse(); // Get last 20 versions, reversed (newest first)
 
-        // Fetch build numbers for each version
-        const versionsWithBuilds = await Promise.all(
-          versionNumbers.map(async (version) => {
-            try {
-              const versionRes = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}`);
-              if (!versionRes.ok) {
-                console.log(`⚠️  Failed to fetch builds for ${version}: ${versionRes.status}`);
-                return { version, build: null };
-              }
-              
-              const versionData = await versionRes.json();
-              
-              // Get the maximum build number (latest build)
-              const latestBuild = Math.max(...versionData.builds);
-              
-              console.log(`✓ Version ${version}: Latest build = ${latestBuild} (from ${versionData.builds.length} builds)`);
-              
-              return { version, build: latestBuild };
-            } catch (error) {
-              console.error(`❌ Error fetching build for ${version}:`, error);
-              return { version, build: null };
-            }
-          })
-        );
+        // Fetch all builds from version_group to get the most up-to-date build numbers
+        const versionGroupRes = await fetch('https://api.papermc.io/v2/projects/paper/version_group/1.21/builds');
+        const versionGroupData = await versionGroupRes.json();
+        
+        // Create a map of version -> max build from the version_group builds
+        const versionBuildMap = {};
+        versionGroupData.builds.forEach(build => {
+          if (!versionBuildMap[build.version] || versionBuildMap[build.version] < build.build) {
+            versionBuildMap[build.version] = build.build;
+          }
+        });
+
+        // Map version numbers to their latest builds
+        const versionsWithBuilds = versionNumbers.map(version => {
+          const build = versionBuildMap[version];
+          if (build) {
+            console.log(`✓ Version ${version}: Latest build = ${build} (from version_group)`);
+            return { version, build };
+          } else {
+            console.log(`⚠️  Version ${version}: No build found in version_group`);
+            return { version, build: null };
+          }
+        });
 
         res.json({ versions: versionsWithBuilds });
       } catch (error) {
