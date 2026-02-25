@@ -1751,20 +1751,34 @@ async function startServer() {
     // Get available PaperMC versions
     app.get('/api/minecraft/versions', verifyToken, async (req, res) => {
       try {
-        console.log('🔍 Fetching available PaperMC versions...');
+        console.log('🔍 Fetching available PaperMC versions from website...');
 
-        // Known latest builds when API is outdated (fallback data)
-        const knownLatestBuilds = {
-          '1.21.11': 117,
-          '1.21.10': 129,
-          '1.21.4': 232,
-          '1.21.1': 133,
-          '1.21.5': 114
-        };
-
-        // Fetch from PaperMC API
-        const response = await fetch('https://api.papermc.io/v2/projects/paper');
+        // Fetch the website HTML to extract actual available downloads
+        const websiteRes = await fetch('https://papermc.io/downloads/paper', { 
+          headers: { 'User-Agent': 'Mozilla/5.0' }
+        });
+        const html = await websiteRes.text();
         
+        // Extract version/build info from download links in the HTML
+        // Format: paper-X.X.X-BUILD.jar
+        const buildRegex = /paper-([\d.a-z-]+)-(\d+)\.jar/g;
+        const versionBuildMap = {};
+        let match;
+        
+        while ((match = buildRegex.exec(html)) !== null) {
+          const version = match[1];
+          const build = parseInt(match[2]);
+          
+          // Keep track of the maximum build for each version
+          if (!versionBuildMap[version] || versionBuildMap[version] < build) {
+            versionBuildMap[version] = build;
+          }
+        }
+        
+        console.log(`✓ Found ${Object.keys(versionBuildMap).length} versions with builds from website`);
+        
+        // Also fetch from API to get the list of versions
+        const response = await fetch('https://api.papermc.io/v2/projects/paper');
         if (!response.ok) {
           throw new Error(`Failed to fetch from PaperMC API: ${response.statusText}`);
         }
@@ -1772,29 +1786,14 @@ async function startServer() {
         const data = await response.json();
         const versionNumbers = data.versions.slice(-20).reverse(); // Get last 20 versions, reversed (newest first)
 
-        // Fetch all builds from version_group to get the most up-to-date build numbers
-        const versionGroupRes = await fetch('https://api.papermc.io/v2/projects/paper/version_group/1.21/builds');
-        const versionGroupData = await versionGroupRes.json();
-        
-        // Create a map of version -> max build from the version_group builds
-        const versionBuildMap = {};
-        versionGroupData.builds.forEach(build => {
-          if (!versionBuildMap[build.version] || versionBuildMap[build.version] < build.build) {
-            versionBuildMap[build.version] = build.build;
-          }
-        });
-
-        // Map version numbers to their latest builds
+        // Map version numbers to their latest builds from the website scrape
         const versionsWithBuilds = versionNumbers.map(version => {
-          // Use known latest builds if available, otherwise use API data
-          let build = knownLatestBuilds[version] || versionBuildMap[version];
-          
+          const build = versionBuildMap[version];
           if (build) {
-            const source = knownLatestBuilds[version] ? 'known latest' : 'version_group';
-            console.log(`✓ Version ${version}: Latest build = ${build} (from ${source})`);
+            console.log(`✓ Version ${version}: Latest build = ${build} (from website)`);
             return { version, build };
           } else {
-            console.log(`⚠️  Version ${version}: No build found`);
+            console.log(`⚠️  Version ${version}: No builds found on website, using API`);
             return { version, build: null };
           }
         });
