@@ -699,8 +699,6 @@ function ServerManagementModal({ server, onClose }) {
                     );
                   })}
                 </ul>
-                  ))}
-                </ul>
               </div>
             </div>
           )}
