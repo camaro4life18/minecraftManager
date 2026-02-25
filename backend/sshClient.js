@@ -764,6 +764,58 @@ export class MinecraftServerManager {
   }
 
   /**
+   * Find a Hangar project given a plugin slug
+   * @private
+   */
+  async findHangarProject(slug) {
+    try {
+      // First try the simple slug
+      console.log(`🔍 Checking Hangar for project slug: ${slug}`);
+      const response = await fetch(`https://hangar.papermc.io/api/v1/projects/${slug}`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        return data.namespace.owner + '/' + data.namespace.slug;
+      }
+      
+      // If not found, search for the project
+      console.log(`🔍 Slug "${slug}" not found, searching Hangar...`);
+      const searchResponse = await fetch(`https://hangar.papermc.io/api/v1/projects?q=${encodeURIComponent(slug)}&limit=10`);
+      
+      if (!searchResponse.ok) {
+        throw new Error(`Search failed with status ${searchResponse.status}`);
+      }
+      
+      const searchData = await searchResponse.json();
+      const results = searchData.result || [];
+      
+      if (results.length === 0) {
+        throw new Error(`No Hangar projects found matching "${slug}"`);
+      }
+      
+      // Try exact match first, then fuzzy match
+      let project = results.find(p => p.namespace.slug.toLowerCase() === slug.toLowerCase());
+      
+      if (!project) {
+        // Fuzzy match - prefer results that start with the slug
+        project = results.find(p => p.namespace.slug.toLowerCase().startsWith(slug.toLowerCase()));
+      }
+      
+      if (!project) {
+        // Use the first result as fallback
+        project = results[0];
+      }
+      
+      const namespace = project.namespace.owner + '/' + project.namespace.slug;
+      console.log(`✓ Found Hangar project: ${namespace} (name: ${project.name})`);
+      return namespace;
+    } catch (error) {
+      console.error(`❌ Error finding Hangar project: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
    * Upgrade an installed plugin to the latest version
    * @param {string} pluginName - Name of the plugin file (e.g., "EssentialsX.jar")
    */
@@ -785,7 +837,10 @@ export class MinecraftServerManager {
       slug = slug.toLowerCase().replace(/[_\s]+/g, '-');
       
       console.log(`🔍 Plugin slug extraction: ${pluginName} -> ${slug}`);
-      const downloadUrl = `https://hangar.papermc.io/api/v1/projects/${slug}/latest/download`;
+      
+      // Dynamically find the correct Hangar project namespace
+      const hangarSlug = await this.findHangarProject(slug);
+      const downloadUrl = `https://hangar.papermc.io/api/v1/projects/${hangarSlug}/latest/download`;
       
       // Use minecraft directory for temp file since /tmp may not be writable
       const tempPath = `${this.minecraftPath}/temp-${Date.now()}-${pluginName}`;
