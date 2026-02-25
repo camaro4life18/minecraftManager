@@ -18,6 +18,16 @@ function ServerManagementModal({ server, onClose }) {
   const [pluginName, setPluginName] = useState('');
   const [pluginUrl, setPluginUrl] = useState('');
   const [uploadFile, setUploadFile] = useState(null);
+  const [repositoryPlugins, setRepositoryPlugins] = useState([]);
+  const [pluginSearchQuery, setPluginSearchQuery] = useState('');
+  const [pluginSearchPage, setPluginSearchPage] = useState(1);
+  const [pluginSearchLoading, setPluginSearchLoading] = useState(false);
+
+  // Version management state
+  const [currentVersion, setCurrentVersion] = useState(null);
+  const [availableVersions, setAvailableVersions] = useState([]);
+  const [selectedVersion, setSelectedVersion] = useState('');
+  const [updating, setUpdating] = useState(false);
 
   // Property edit state
   const [editingProperties, setEditingProperties] = useState(false);
@@ -90,6 +100,26 @@ function ServerManagementModal({ server, onClose }) {
           if (pluginsRes.ok) {
             const data = await pluginsRes.json();
             setPlugins(data.plugins);
+          }
+          break;
+
+        case 'version':
+          const versionRes = await fetch(
+            `${process.env.REACT_APP_API_URL}/api/servers/${server.vmid}/minecraft/version`,
+            { headers: { 'Authorization': `Bearer ${token}` } }
+          );
+          if (versionRes.ok) {
+            const data = await versionRes.json();
+            setCurrentVersion(data.version);
+          }
+
+          const versionsRes = await fetch(
+            `${process.env.REACT_APP_API_URL}/api/minecraft/versions`,
+            { headers: { 'Authorization': `Bearer ${token}` } }
+          );
+          if (versionsRes.ok) {
+            const data = await versionsRes.json();
+            setAvailableVersions(data.versions.slice(0, 10));
           }
           break;
           
@@ -292,6 +322,113 @@ function ServerManagementModal({ server, onClose }) {
     }
   };
 
+  const searchRepositoryPlugins = async (query, page = 1) => {
+    setPluginSearchLoading(true);
+    setError('');
+    
+    try {
+      const token = localStorage.getItem('authToken');
+      const url = new URL(`${process.env.REACT_APP_API_URL}/api/minecraft/plugins/repository`);
+      url.searchParams.set('search', query);
+      url.searchParams.set('page', page);
+
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to search plugins');
+      }
+
+      const data = await response.json();
+      setRepositoryPlugins(data.plugins);
+      setPluginSearchPage(page);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPluginSearchLoading(false);
+    }
+  };
+
+  const installPluginFromRepository = async (pluginSlug) => {
+    setLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(
+        `${process.env.REACT_APP_API_URL}/api/servers/${server.vmid}/minecraft/plugins/install-from-repo`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ pluginName: pluginSlug })
+        }
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to install plugin');
+      }
+
+      setSuccess('Plugin installed! Restart server to load it.');
+      setPluginSearchQuery('');
+      setRepositoryPlugins([]);
+      setTimeout(() => loadTabData('plugins'), 1000);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdatePaperMC = async () => {
+    if (!selectedVersion) {
+      setError('Please select a version to update to');
+      return;
+    }
+
+    if (!window.confirm(`Update PaperMC to version ${selectedVersion}? Server restart required.`)) {
+      return;
+    }
+
+    setUpdating(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(
+        `${process.env.REACT_APP_API_URL}/api/servers/${server.vmid}/minecraft/version`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ version: selectedVersion })
+        }
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to update PaperMC');
+      }
+
+      const data = await response.json();
+      setSuccess(data.message || 'PaperMC updated successfully! Restart the server to apply.');
+      setSelectedVersion('');
+      setTimeout(() => loadTabData('version'), 2000);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   if (!sshConfigured) {
     return (
       <div className="modal-overlay" onClick={onClose}>
@@ -333,6 +470,12 @@ function ServerManagementModal({ server, onClose }) {
             onClick={() => setActiveTab('plugins')}
           >
             Plugins
+          </button>
+          <button 
+            className={activeTab === 'version' ? 'active' : ''}
+            onClick={() => setActiveTab('version')}
+          >
+            Version
           </button>
           <button 
             className={activeTab === 'logs' ? 'active' : ''}
@@ -415,13 +558,56 @@ function ServerManagementModal({ server, onClose }) {
           {activeTab === 'plugins' && (
             <div className="plugins-tab">
               <div className="plugin-install">
-                <h3>Install Plugin</h3>
+                <h3>Install Plugin from Repository</h3>
                 
-                <div className="install-from-url">
-                  <h4>From URL</h4>
+                <div className="repo-search">
                   <input
                     type="text"
-                    placeholder="Plugin file name (e.g., EssentialsX.jar)"
+                    placeholder="Search PaperMC plugins (e.g., EssentialsX, WorldEdit)..."
+                    value={pluginSearchQuery}
+                    onChange={(e) => setPluginSearchQuery(e.target.value)}
+                  />
+                  <button 
+                    onClick={() => searchRepositoryPlugins(pluginSearchQuery)}
+                    disabled={pluginSearchLoading || !pluginSearchQuery}
+                  >
+                    {pluginSearchLoading ? '🔍 Searching...' : '🔍 Search'}
+                  </button>
+                </div>
+
+                {repositoryPlugins.length > 0 && (
+                  <div className="repo-results">
+                    <h4>Available Plugins ({repositoryPlugins.length})</h4>
+                    <div className="plugin-list">
+                      {repositoryPlugins.map((plugin) => (
+                        <div key={plugin.slug} className="plugin-item">
+                          <div className="plugin-info">
+                            <h5>{plugin.name}</h5>
+                            <p className="plugin-desc">{plugin.description}</p>
+                            <p className="plugin-meta">by {plugin.author} • {plugin.downloads?.toLocaleString()} downloads</p>
+                          </div>
+                          <button 
+                            onClick={() => installPluginFromRepository(plugin.slug)}
+                            disabled={loading}
+                            className="install-btn"
+                          >
+                            {loading ? 'Installing...' : 'Install'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="alternate-install" style={{ marginTop: '2rem', paddingTop: '2rem', borderTop: '1px solid #333' }}>
+                <h3>Alternative Installation Methods</h3>
+                
+                <div className="install-from-url">
+                  <h4>Install from URL</h4>
+                  <input
+                    type="text"
+                    placeholder="Plugin file name (e.g., CustomPlugin.jar)"
                     value={pluginName}
                     onChange={(e) => setPluginName(e.target.value)}
                   />
@@ -437,7 +623,7 @@ function ServerManagementModal({ server, onClose }) {
                 </div>
                 
                 <div className="install-from-file">
-                  <h4>Upload File</h4>
+                  <h4>Upload Plugin File</h4>
                   <input
                     type="file"
                     accept=".jar"
@@ -480,6 +666,44 @@ function ServerManagementModal({ server, onClose }) {
                 <button onClick={() => loadTabData('system')}>Refresh</button>
               </div>
               <pre className="system-info">{systemInfo}</pre>
+            </div>
+          )}
+
+          {activeTab === 'version' && (
+            <div className="version-tab">
+              <div className="version-info">
+                <h3>PaperMC Version Management</h3>
+                {currentVersion && (
+                  <div className="current-version">
+                    <p><strong>Current Version:</strong> {currentVersion || 'Not a PaperMC server'}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="version-update">
+                <h4>Update to Latest Version</h4>
+                <div className="version-selector">
+                  <select 
+                    value={selectedVersion} 
+                    onChange={(e) => setSelectedVersion(e.target.value)}
+                    disabled={updating}
+                  >
+                    <option value="">-- Select a version --</option>
+                    {availableVersions.map((version) => (
+                      <option key={version} value={version}>
+                        {version}
+                      </option>
+                    ))}
+                  </select>
+                  <button 
+                    onClick={handleUpdatePaperMC} 
+                    disabled={updating || !selectedVersion}
+                  >
+                    {updating ? '⏳ Updating...' : '📥 Update PaperMC'}
+                  </button>
+                </div>
+                <p className="version-note">⚠️ Server will need to restart for changes to take effect.</p>
+              </div>
             </div>
           )}
         </div>
