@@ -232,12 +232,12 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
               onChange={handleInputChange}
               disabled={loading || optionsLoading}
             >
-              <option value="">Auto-select (use source storage node)</option>
+              <option value="">Auto-select (use source node)</option>
               {nodes.map(node => (
                 <option key={node.id} value={node.id}>{node.name}</option>
               ))}
             </select>
-            <small>Clone will be created on the source node. Select this for reference only.</small>
+            <small>After cloning, the new VM will be migrated to this node. Leave blank to keep on source node.</small>
           </div>
 
           <div className="form-group">

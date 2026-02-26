@@ -369,6 +369,83 @@ class ProxmoxClient {
     }
   }
 
+  // Migrate a VM to a different node
+  async migrateServer(vmid, targetNode) {
+    if (!this.token) {
+      await this.authenticate();
+    }
+
+    try {
+      // Get VM details to know its type and current node
+      const details = await this.getServerDetails(vmid);
+      const currentNode = details.node;
+      const type = details.type;
+
+      console.log(`🚀 Migrating VM ${vmid} from ${currentNode} to ${targetNode}...`);
+
+      const migrateData = {
+        target: targetNode,
+        online: 1 // Live migration - VM stays running
+      };
+
+      const response = await this.api.post(
+        `/nodes/${currentNode}/${type}/${vmid}/migrate`,
+        migrateData,
+        {
+          headers: {
+            'CSRFPreventionToken': this.csrfToken
+          }
+        }
+      );
+
+      // Proxmox returns a UPID for the migration task
+      const upid = response.data.data;
+      console.log(`✓ Migration task initiated with UPID: ${upid}`);
+
+      return {
+        upid,
+        vmid,
+        targetNode
+      };
+    } catch (error) {
+      const errorDetails = error.response?.data?.errors || error.response?.data || error.message;
+      console.error(`❌ Migration request failed:`, JSON.stringify(errorDetails, null, 2));
+      throw new Error(`Failed to migrate server: ${error.message}`);
+    }
+  }
+
+  // Wait for a Proxmox task (UPID) to complete
+  async waitForTask(upid, maxWaitSeconds = 300) {
+    const startTime = Date.now();
+    const maxWaitMs = maxWaitSeconds * 1000;
+
+    while (Date.now() - startTime < maxWaitMs) {
+      try {
+        const response = await this.api.get(`/nodes/${upid.split(':')[1]}/tasks/${upid.split(':')[4]}`);
+        const task = response.data.data;
+
+        if (task.status === 'stopped') {
+          if (task.exitstatus === 'OK') {
+            console.log(`✓ Task ${upid} completed successfully`);
+            return true;
+          } else {
+            console.error(`❌ Task ${upid} failed: ${task.exitstatus}`);
+            return false;
+          }
+        }
+
+        // Task still running, wait a bit
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (error) {
+        // If we can't get task status, assume it's still running or completed
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+
+    console.warn(`⚠️  Task ${upid} did not complete within ${maxWaitSeconds} seconds`);
+    return false;
+  }
+
   // Start a server
   async startServer(vmid) {
     if (!this.token) {

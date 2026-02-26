@@ -1209,6 +1209,31 @@ async function startServer() {
           console.warn('⚠️  Could not determine assigned VM ID from clone result:', result);
         }
         
+        // If targetNode was specified, migrate the cloned VM to that node
+        if (targetNode) {
+          try {
+            console.log(`🔄 Starting migration of VM ${assignedVmId} to node ${targetNode}...`);
+            const sourceVmDetails = await cloneProxmox.getServerDetails(sourceVmId);
+            const sourceNode = sourceVmDetails.node;
+            
+            if (targetNode !== sourceNode) {
+              console.log(`📍 Source node: ${sourceNode}, Target node: ${targetNode}`);
+              const migrationResult = await cloneProxmox.migrateServer(assignedVmId, targetNode);
+              console.log(`✓ Migration requested with UPID: ${migrationResult.upid}`);
+              
+              // Note: Migration happens asynchronously. The DHCP setup will proceed
+              // while migration completes in the background. This is fine since the 
+              // VM is being configured with the new IP regardless of node location.
+            } else {
+              console.log(`ℹ️  VM already on target node ${targetNode}, no migration needed`);
+            }
+          } catch (migrationError) {
+            console.warn(`⚠️  Warning - VM migration failed (clone succeeded): ${migrationError.message}`);
+            // Don't fail the entire clone operation if migration fails
+            // The VM was cloned successfully, just not on the target node
+          }
+        }
+        
         // Log the action and track as managed server with seed
         await ServerCloneLog.create(req.user.userId, sourceVmId, assignedVmId, newVmName, 'pending');
         await ManagedServer.create(assignedVmId, req.user.userId, newVmName, serverSeed);
