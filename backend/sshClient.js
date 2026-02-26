@@ -795,6 +795,29 @@ export class MinecraftServerManager {
         throw new Error(`Could not determine latest build for version ${version}`);
       }
 
+      // Verify the build is actually available in the API
+      // If not, fall back to the highest available build from the API
+      console.log(`🔍 Verifying build ${latestBuild} is available in API...`);
+      const buildCheckRes = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}/builds/${latestBuild}`);
+      
+      if (!buildCheckRes.ok) {
+        console.warn(`⚠️  Build ${latestBuild} not available in API yet, finding highest available...`);
+        try {
+          const versionListRes = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}`);
+          if (versionListRes.ok) {
+            const versionData = await versionListRes.json();
+            if (versionData.builds && versionData.builds.length > 0) {
+              latestBuild = versionData.builds[versionData.builds.length - 1];
+              console.log(`✓ Falling back to available build ${latestBuild}`);
+            }
+          }
+        } catch (e) {
+          console.warn(`⚠️  Could not fetch available builds: ${e.message}`);
+        }
+      } else {
+        console.log(`✓ Build ${latestBuild} verified in API`);
+      }
+
       // Get the current jar info to see if we're using a symlink
       const symlinkCmd = `[ -L ${this.minecraftPath}/server.jar ] && readlink ${this.minecraftPath}/server.jar || echo ''`;
       const symlinkResult = await this.runAsMinecraft(symlinkCmd);
@@ -806,8 +829,55 @@ export class MinecraftServerManager {
 
       // Download the new version
       const downloadUrl = `https://api.papermc.io/v2/projects/paper/versions/${version}/builds/${latestBuild}/downloads/${jarName}`;
-      const downloadCmd = `cd ${this.minecraftPath} && curl -L -o ${jarName} ${downloadUrl}`;
+      console.log(`📥 Downloading from: ${downloadUrl}`);
+      const downloadCmd = `cd ${this.minecraftPath} && curl -L -o ${jarName} ${downloadUrl} 2>&1`;
       const downloadResult = await this.runAsMinecraft(downloadCmd);
+
+      if (downloadResult.code !== 0) {
+        console.error(`❌ Download failed: ${downloadResult.stderr || downloadResult.stdout}`);
+        throw new Error(`Failed to download PaperMC version ${version} build ${latestBuild}`);
+      }
+
+      // Verify downloaded file size is reasonable (should be > 52MB)
+      const sizeCmd = `ls -lh ${jarPath} | awk '{print $5}'`;
+      const sizeResult = await this.runAsMinecraft(sizeCmd);
+      const fileSize = sizeResult.stdout.trim();
+      console.log(`✓ Downloaded file size: ${fileSize}`);
+
+      if (fileSize && (fileSize.includes('K') || fileSize === '0')) {
+        throw new Error(`Downloaded file is too small (${fileSize}), download may have failed`);
+      }
+
+      console.log(`✓ Downloaded PaperMC version ${version} build ${latestBuild}`);
+
+      // If server.jar is a symlink, update it; otherwise create one
+      if (currentTarget) {
+        // Update the symlink to point to the new jar
+        const updateSymlinkCmd = `rm ${this.minecraftPath}/server.jar && ln -s ${jarPath} ${this.minecraftPath}/server.jar`;
+        await this.runAsMinecraft(updateSymlinkCmd);
+        console.log(`✓ Updated symlink to point to ${jarName}`);
+      } else {
+        // Create a symlink
+        const createSymlinkCmd = `ln -s ${jarPath} ${this.minecraftPath}/server.jar`;
+        await this.runAsMinecraft(createSymlinkCmd);
+        console.log(`✓ Created symlink to ${jarName}`);
+      }
+
+      return {
+        success: true,
+        version,
+        build: latestBuild,
+        jarName,
+        message: `Successfully updated to PaperMC ${version} build ${latestBuild}. Restart server to apply changes.`
+      };
+    } catch (error) {
+      console.error('❌ Error updating PaperMC:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
 
       if (downloadResult.code !== 0) {
         throw new Error(`Failed to download PaperMC version ${version} build ${latestBuild}`);
