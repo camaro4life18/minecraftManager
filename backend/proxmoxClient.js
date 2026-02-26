@@ -288,13 +288,15 @@ class ProxmoxClient {
         }
       );
 
-      const result = response.data.data;
-      console.log(`✓ Clone response:`, result);
+      // Proxmox clone returns a UPID (Unique Process ID) as a string
+      const upid = response.data.data;
+      console.log(`✓ Clone task initiated with UPID: ${upid}`);
 
-      // If vmid wasn't specified, try to determine it from the next available ID
-      // Note: Proxmox clone returns a task UPID, not the new vmid directly
-      // We always provide the newid upfront, so we know what the new ID is
-      result.newid = finalVmId;
+      // Create result object with both UPID and the new VM ID we calculated
+      const result = {
+        upid,
+        newid: finalVmId
+      };
       console.log(`✓ VM cloned successfully with ID: ${result.newid}`);
 
       return result;
