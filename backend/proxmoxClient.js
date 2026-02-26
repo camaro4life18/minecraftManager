@@ -30,11 +30,14 @@ class ProxmoxClient {
         password: this.password
       });
       
+      console.log(`🔍 Proxmox auth response:`, JSON.stringify(response.data, null, 2));
+      
       this.token = response.data.data.ticket;
-      this.userId = response.data.data.userid;
+      this.userId = response.data.data.username;
       this.api.defaults.headers.common['Cookie'] = `PVEAuthCookie=${this.token}`;
       
       console.log(`✅ Proxmox authentication successful for ${this.userId}`);
+      console.log(`🔑 Token set, Cookie header configured`);
       return this.token;
     } catch (error) {
       console.error(`❌ Proxmox authentication failed:`, error.response?.data || error.message);
