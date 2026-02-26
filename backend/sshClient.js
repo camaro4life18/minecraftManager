@@ -795,28 +795,7 @@ export class MinecraftServerManager {
         throw new Error(`Could not determine latest build for version ${version}`);
       }
 
-      // Verify the build is actually available in the API
-      // If not, fall back to the highest available build from the API
-      console.log(`🔍 Verifying build ${latestBuild} is available in API...`);
-      const buildCheckRes = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}/builds/${latestBuild}`);
-      
-      if (!buildCheckRes.ok) {
-        console.warn(`⚠️  Build ${latestBuild} not available in API yet, finding highest available...`);
-        try {
-          const versionListRes = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}`);
-          if (versionListRes.ok) {
-            const versionData = await versionListRes.json();
-            if (versionData.builds && versionData.builds.length > 0) {
-              latestBuild = versionData.builds[versionData.builds.length - 1];
-              console.log(`✓ Falling back to available build ${latestBuild}`);
-            }
-          }
-        } catch (e) {
-          console.warn(`⚠️  Could not fetch available builds: ${e.message}`);
-        }
-      } else {
-        console.log(`✓ Build ${latestBuild} verified in API`);
-      }
+      console.log(`📥 Will attempt to download build ${latestBuild} for version ${version}`);
 
       // Get the current jar info to see if we're using a symlink
       const symlinkCmd = `[ -L ${this.minecraftPath}/server.jar ] && readlink ${this.minecraftPath}/server.jar || echo ''`;
@@ -824,31 +803,81 @@ export class MinecraftServerManager {
       const currentTarget = symlinkResult.stdout.trim();
 
       // Construct the jar name
-      const jarName = `paper-${version}-${latestBuild}.jar`;
-      const jarPath = `${this.minecraftPath}/${jarName}`;
+      let jarName = `paper-${version}-${latestBuild}.jar`;
+      let jarPath = `${this.minecraftPath}/${jarName}`;
+      let actualBuild = latestBuild;
+      let downloadSucceeded = false;
 
-      // Download the new version
-      const downloadUrl = `https://api.papermc.io/v2/projects/paper/versions/${version}/builds/${latestBuild}/downloads/${jarName}`;
+      // Try downloading the target build
+      let downloadUrl = `https://api.papermc.io/v2/projects/paper/versions/${version}/builds/${latestBuild}/downloads/${jarName}`;
       console.log(`📥 Downloading from: ${downloadUrl}`);
-      const downloadCmd = `cd ${this.minecraftPath} && curl -L -o ${jarName} ${downloadUrl} 2>&1`;
-      const downloadResult = await this.runAsMinecraft(downloadCmd);
+      let downloadCmd = `cd ${this.minecraftPath} && curl -L -o ${jarName} ${downloadUrl} 2>&1`;
+      let downloadResult = await this.runAsMinecraft(downloadCmd);
 
       if (downloadResult.code !== 0) {
         console.error(`❌ Download failed: ${downloadResult.stderr || downloadResult.stdout}`);
-        throw new Error(`Failed to download PaperMC version ${version} build ${latestBuild}`);
+      } else {
+        // Verify downloaded file size is reasonable (should be > 52MB)
+        const sizeCmd = `stat -c%s ${jarPath} 2>/dev/null || stat -f%z ${jarPath} 2>/dev/null || ls -l ${jarPath} | awk '{print $5}'`;
+        const sizeResult = await this.runAsMinecraft(sizeCmd);
+        const fileSizeBytes = parseInt(sizeResult.stdout.trim());
+        
+        if (fileSizeBytes && fileSizeBytes > 50000000) { // > 50MB
+          console.log(`✓ Downloaded file size: ${(fileSizeBytes / 1024 / 1024).toFixed(1)}M`);
+          downloadSucceeded = true;
+        } else {
+          console.warn(`⚠️  Downloaded file is too small (${fileSizeBytes} bytes), may have failed`);
+          // Clean up failed download
+          await this.runAsMinecraft(`rm -f ${jarPath}`);
+        }
       }
 
-      // Verify downloaded file size is reasonable (should be > 52MB)
-      const sizeCmd = `ls -lh ${jarPath} | awk '{print $5}'`;
-      const sizeResult = await this.runAsMinecraft(sizeCmd);
-      const fileSize = sizeResult.stdout.trim();
-      console.log(`✓ Downloaded file size: ${fileSize}`);
+      // If download failed, fall back to highest available build from API
+      if (!downloadSucceeded) {
+        console.warn(`⚠️  Build ${latestBuild} download failed, falling back to API's latest available build...`);
+        try {
+          const versionListRes = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}`);
+          if (versionListRes.ok) {
+            const versionData = await versionListRes.json();
+            if (versionData.builds && versionData.builds.length > 0) {
+              actualBuild = versionData.builds[versionData.builds.length - 1];
+              console.log(`✓ Falling back to available build ${actualBuild}`);
+              
+              // Try downloading the fallback build
+              jarName = `paper-${version}-${actualBuild}.jar`;
+              jarPath = `${this.minecraftPath}/${jarName}`;
+              downloadUrl = `https://api.papermc.io/v2/projects/paper/versions/${version}/builds/${actualBuild}/downloads/${jarName}`;
+              console.log(`📥 Downloading fallback from: ${downloadUrl}`);
+              downloadCmd = `cd ${this.minecraftPath} && curl -L -o ${jarName} ${downloadUrl} 2>&1`;
+              downloadResult = await this.runAsMinecraft(downloadCmd);
 
-      if (fileSize && (fileSize.includes('K') || fileSize === '0')) {
-        throw new Error(`Downloaded file is too small (${fileSize}), download may have failed`);
+              if (downloadResult.code !== 0) {
+                throw new Error(`Failed to download fallback build ${actualBuild}`);
+              }
+
+              // Verify fallback download
+              const sizeCmd = `stat -c%s ${jarPath} 2>/dev/null || stat -f%z ${jarPath} 2>/dev/null || ls -l ${jarPath} | awk '{print $5}'`;
+              const sizeResult = await this.runAsMinecraft(sizeCmd);
+              const fileSizeBytes = parseInt(sizeResult.stdout.trim());
+              
+              if (!fileSizeBytes || fileSizeBytes < 50000000) {
+                throw new Error(`Fallback download too small (${fileSizeBytes} bytes)`);
+              }
+              
+              console.log(`✓ Downloaded fallback file size: ${(fileSizeBytes / 1024 / 1024).toFixed(1)}M`);
+              downloadSucceeded = true;
+            }
+          }
+        } catch (e) {
+          throw new Error(`Both target and fallback downloads failed: ${e.message}`);
+        }
       }
 
-      console.log(`✓ Downloaded PaperMC version ${version} build ${latestBuild}`);
+      if (!downloadSucceeded) {
+        throw new Error(`Failed to download any working build for version ${version}`);
+      }
+
+      console.log(`✓ Downloaded PaperMC version ${version} build ${actualBuild}`);
 
       // If server.jar is a symlink, update it; otherwise create one
       if (currentTarget) {
@@ -866,9 +895,9 @@ export class MinecraftServerManager {
       return {
         success: true,
         version,
-        build: latestBuild,
+        build: actualBuild,
         jarName,
-        message: `Successfully updated to PaperMC ${version} build ${latestBuild}. Restart server to apply changes.`
+        message: `Successfully updated to PaperMC ${version} build ${actualBuild}. Restart server to apply changes.`
       };
     } catch (error) {
       console.error('❌ Error updating PaperMC:', error);
