@@ -1005,6 +1005,8 @@ async function startServer() {
       }
     });
 
+    // Add a server to managed list - protected (admin only)
+    app.post('/api/servers', verifyToken, async (req, res) => {
       try {
         // Check if user is admin
         if (req.user.role !== 'admin') {
