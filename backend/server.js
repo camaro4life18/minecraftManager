@@ -1181,19 +1181,25 @@ async function startServer() {
         // Try to add to Velocity server list (optional - won't fail clone if it fails)
         // Note: This assumes the new server IP will be on the Proxmox local network
         // You may need to adjust the IP or add additional configuration
+        let velocityResult = null;
         if (velocity.isConfigured() && assignedVmId) {
-          // Extract the numeric part to get the potential IP on local network
-          // For example, minecraft02 might be 192.168.x.102 on your network
-          const numericPart = assignedVmId.toString();
-          const serverIp = `${localIp}.${numericPart}`;
+          // Calculate IP address based on VM ID (same logic as DHCP reservation)
+          // VM 102 -> 192.168.1.02 (last 2 digits), VM 7 -> 192.168.1.07
+          const vmIdStr = assignedVmId.toString();
+          const lastDigits = vmIdStr.slice(-2).padStart(2, '0');
+          const serverIp = `${localIp}.${lastDigits}`;
           
-          const velocityResult = await velocity.addServer(
+          console.log(`🎮 Adding to Velocity: ${domainName} → ${serverIp}:25565`);
+          
+          velocityResult = await velocity.addServer(
             domainName,
             serverIp,
             25565
           );
           
-          if (!velocityResult.success) {
+          if (velocityResult.success) {
+            console.log(`✅ Added to Velocity proxy successfully`);
+          } else {
             console.warn(`⚠️  Could not fully configure velocity, but VM clone succeeded: ${velocityResult.message}`);
           }
         }
@@ -1206,6 +1212,7 @@ async function startServer() {
           seed: serverSeed,
           worldSetup: worldSetupResult ? worldSetupResult.success : false,
           dhcpReservation: dhcpReservationResult ? dhcpReservationResult.success : false,
+          velocityAdded: velocityResult ? velocityResult.success : false,
           ipAddress: dhcpReservationResult?.ip || null,
           macAddress: dhcpReservationResult?.mac || null
         });
