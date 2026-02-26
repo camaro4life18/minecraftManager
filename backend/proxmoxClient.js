@@ -126,6 +126,60 @@ class ProxmoxClient {
     }
   }
 
+  /**
+   * Get VM network configuration including MAC address
+   * This is needed for DHCP reservations
+   */
+  async getVMNetworkConfig(vmid) {
+    if (!this.token) {
+      await this.authenticate();
+    }
+
+    try {
+      const serverDetails = await this.getServerDetails(vmid);
+      const { node, type } = serverDetails;
+
+      // Get VM configuration
+      const configResponse = await this.api.get(`/nodes/${node}/${type}/${vmid}/config`);
+      const config = configResponse.data.data;
+
+      // Extract network interfaces and MAC addresses
+      const networkInterfaces = [];
+      
+      // Check for net0, net1, net2, etc.
+      for (let i = 0; i < 10; i++) {
+        const netKey = `net${i}`;
+        if (config[netKey]) {
+          const netConfig = config[netKey];
+          // Format is usually like: "virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0"
+          const macMatch = netConfig.match(/([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})/);
+          if (macMatch) {
+            networkInterfaces.push({
+              interface: netKey,
+              mac: macMatch[0].toUpperCase(),
+              config: netConfig
+            });
+          }
+        }
+      }
+
+      if (networkInterfaces.length === 0) {
+        console.warn(`⚠️  No network interfaces found for VM ${vmid}`);
+      }
+
+      return {
+        vmid,
+        node,
+        type,
+        networkInterfaces,
+        primaryMac: networkInterfaces[0]?.mac || null
+      };
+    } catch (error) {
+      console.error(`❌ Failed to get network config for VM ${vmid}:`, error.message);
+      throw new Error(`Failed to get network config: ${error.message}`);
+    }
+  }
+
   // Clone a server
   // If newVmId is not provided, Proxmox will auto-assign the next available VM ID
   async cloneServer(sourceVmId, newVmId, newVmName) {

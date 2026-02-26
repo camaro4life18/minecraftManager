@@ -9,6 +9,7 @@ import multer from 'multer';
 import path from 'path';
 import ProxmoxClient from './proxmoxClient.js';
 import VelocityClient from './velocityClient.js';
+import AsusRouterClient from './asusRouterClient.js';
 import SSHClient, { MinecraftServerManager } from './sshClient.js';
 import { 
   initializeDatabase, 
@@ -609,6 +610,111 @@ async function startServer() {
       }
     });
 
+    // Test ASUS Router connection
+    app.post('/api/admin/config/test-router', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { host, username, password, useHttps } = req.body;
+
+        if (!host || !username || !password) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Router host, username, and password are required' 
+          });
+        }
+
+        try {
+          console.log(`🧪 Testing ASUS router connection to ${host}...`);
+          const testRouter = new AsusRouterClient({ 
+            host, 
+            username, 
+            password, 
+            useHttps: useHttps !== false 
+          });
+          
+          const result = await testRouter.testConnection();
+          
+          res.json(result);
+        } catch (error) {
+          res.json({ 
+            success: false, 
+            error: `Connection failed: ${error.message}` 
+          });
+        }
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Get router configuration
+    app.get('/api/admin/config/router', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const routerHost = await AppConfig.get('router_host');
+        const routerUsername = await AppConfig.get('router_username');
+        // Don't send password back to client
+        
+        res.json({
+          configured: !!(routerHost && routerUsername),
+          host: routerHost || '',
+          username: routerUsername || '',
+          useHttps: (await AppConfig.get('router_use_https')) !== 'false'
+        });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Update router configuration
+    app.put('/api/admin/config/router', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { host, username, password, useHttps } = req.body;
+
+        if (!host || !username || !password) {
+          return res.status(400).json({ 
+            error: 'Router host, username, and password are required' 
+          });
+        }
+
+        // Save router config to database
+        await AppConfig.set('router_host', host, req.user.userId, 'ASUS Router IP address');
+        await AppConfig.set('router_username', username, req.user.userId, 'ASUS Router username');
+        await AppConfig.set('router_password', password, req.user.userId, 'ASUS Router password');
+        await AppConfig.set('router_use_https', useHttps ? 'true' : 'false', req.user.userId, 'Use HTTPS for router');
+
+        console.log(`✅ Router configuration updated by ${req.user.username}`);
+        res.json({ success: true, message: 'Router configuration saved' });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get DHCP reservations from router
+    app.get('/api/admin/router/dhcp-reservations', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const routerHost = await AppConfig.get('router_host');
+        const routerUsername = await AppConfig.get('router_username');
+        const routerPassword = await AppConfig.get('router_password');
+        const routerUseHttps = (await AppConfig.get('router_use_https')) !== 'false';
+
+        if (!routerHost || !routerUsername || !routerPassword) {
+          return res.status(400).json({ 
+            error: 'Router not configured. Please configure in admin settings.' 
+          });
+        }
+
+        const router = new AsusRouterClient({
+          host: routerHost,
+          username: routerUsername,
+          password: routerPassword,
+          useHttps: routerUseHttps
+        });
+
+        const reservations = await router.getDHCPReservations();
+        res.json({ reservations });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // ============================================
     // SERVER MANAGEMENT ROUTES (Auth required)
     // ============================================
@@ -974,6 +1080,60 @@ async function startServer() {
         const ipPattern = `${localIp}.{}`;
         const sshConfigCopied = await ManagedServer.copySSHConfig(sourceVmId, assignedVmId, ipPattern);
 
+        // Create DHCP reservation in ASUS router (if configured)
+        let dhcpReservationResult = null;
+        try {
+          const routerHost = await AppConfig.get('router_host');
+          const routerUsername = await AppConfig.get('router_username');
+          const routerPassword = await AppConfig.get('router_password');
+          const routerUseHttps = (await AppConfig.get('router_use_https')) !== 'false';
+
+          if (routerHost && routerUsername && routerPassword && assignedVmId) {
+            console.log(`🌐 Creating DHCP reservation for VM ${assignedVmId}...`);
+
+            // Get VM's MAC address from Proxmox
+            const networkConfig = await proxmox.getVMNetworkConfig(assignedVmId);
+            
+            if (networkConfig.primaryMac) {
+              const macAddress = networkConfig.primaryMac;
+              
+              // Calculate IP address based on VM ID
+              // VM 102 -> 192.168.1.102, VM 107 -> 192.168.1.107
+              const vmIdStr = assignedVmId.toString();
+              const lastDigits = vmIdStr.slice(-2).padStart(2, '0');
+              const targetIp = `${localIp}.${lastDigits}`;
+
+              console.log(`   MAC: ${macAddress}`);
+              console.log(`   Target IP: ${targetIp}`);
+
+              // Create router client and add reservation
+              const router = new AsusRouterClient({
+                host: routerHost,
+                username: routerUsername,
+                password: routerPassword,
+                useHttps: routerUseHttps
+              });
+
+              dhcpReservationResult = await router.addDHCPReservation(
+                macAddress,
+                targetIp,
+                domainName
+              );
+
+              if (dhcpReservationResult.success) {
+                console.log(`✅ DHCP reservation created: ${macAddress} → ${targetIp}`);
+              }
+            } else {
+              console.warn(`⚠️  Could not get MAC address for VM ${assignedVmId}`);
+            }
+          } else {
+            console.log(`ℹ️  Router not configured, skipping DHCP reservation`);
+          }
+        } catch (routerError) {
+          console.error(`⚠️  Failed to create DHCP reservation (non-fatal):`, routerError.message);
+          // Don't fail the entire clone operation if router config fails
+        }
+
         // Set up fresh world with the new seed
         // This will delete old world data and configure server.properties
         let worldSetupResult = null;
@@ -1044,7 +1204,10 @@ async function startServer() {
           vmid: assignedVmId, 
           domainName, 
           seed: serverSeed,
-          worldSetup: worldSetupResult ? worldSetupResult.success : false
+          worldSetup: worldSetupResult ? worldSetupResult.success : false,
+          dhcpReservation: dhcpReservationResult ? dhcpReservationResult.success : false,
+          ipAddress: dhcpReservationResult?.ip || null,
+          macAddress: dhcpReservationResult?.mac || null
         });
       } catch (error) {
         res.status(500).json({ error: error.message });
