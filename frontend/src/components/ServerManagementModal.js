@@ -502,7 +502,8 @@ function ServerManagementModal({ server, onClose }) {
       return;
     }
 
-    if (!window.confirm(`Update PaperMC to version ${selectedVersion}? Server restart required.`)) {
+    const displayVersion = selectedVersion.replace(':', ' Build ');
+    if (!window.confirm(`Update PaperMC to version ${displayVersion}? Server restart required.`)) {
       return;
     }
 
@@ -934,7 +935,10 @@ function ServerManagementModal({ server, onClose }) {
                   >
                     <option value="">-- Select a version --</option>
                     {availableVersions.map((versionInfo) => (
-                      <option key={versionInfo.version} value={versionInfo.version}>
+                      <option 
+                        key={versionInfo.version} 
+                        value={versionInfo.build ? `${versionInfo.version}:${versionInfo.build}` : versionInfo.version}
+                      >
                         {versionInfo.build ? `${versionInfo.version} (Build ${versionInfo.build})` : versionInfo.version}
                       </option>
                     ))}
