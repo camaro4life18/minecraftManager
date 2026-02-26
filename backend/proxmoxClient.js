@@ -193,6 +193,52 @@ class ProxmoxClient {
     }
   }
 
+  // Get the next available VM ID
+  async getNextAvailableVmId() {
+    if (!this.token) {
+      await this.authenticate();
+    }
+
+    try {
+      const response = await this.api.get('/nodes');
+      const nodes = response.data.data;
+      let maxVmId = 100; // Start from 100 as minimum
+
+      for (const node of nodes) {
+        // Get all QEMU VMs
+        try {
+          const vmsResponse = await this.api.get(`/nodes/${node.node}/qemu`);
+          const vms = vmsResponse.data.data || [];
+          vms.forEach(vm => {
+            if (vm.vmid > maxVmId) {
+              maxVmId = vm.vmid;
+            }
+          });
+        } catch (err) {
+          console.warn(`⚠️  Could not fetch QEMU VMs from ${node.node}`);
+        }
+
+        // Get all LXC containers
+        try {
+          const lxcResponse = await this.api.get(`/nodes/${node.node}/lxc`);
+          const lxcs = lxcResponse.data.data || [];
+          lxcs.forEach(lxc => {
+            if (lxc.vmid > maxVmId) {
+              maxVmId = lxc.vmid;
+            }
+          });
+        } catch (err) {
+          console.warn(`⚠️  Could not fetch LXC containers from ${node.node}`);
+        }
+      }
+
+      const nextVmId = maxVmId + 1;
+      console.log(`🔢 Next available VM ID: ${nextVmId} (current max: ${maxVmId})`);
+      return nextVmId;
+    } catch (error) {
+      throw new Error(`Failed to get next available VM ID: ${error.message}`);
+    }
+  }
   // Clone a server
   // If newVmId is not provided, Proxmox will auto-assign the next available VM ID
   async cloneServer(sourceVmId, newVmId, newVmName) {
@@ -219,10 +265,13 @@ class ProxmoxClient {
         full: 1 // Full clone (not linked clone)
       };
 
-      // Only include vmid if explicitly provided, otherwise Proxmox auto-assigns
-      if (newVmId) {
-        cloneData.vmid = newVmId;
+      // Get next available VM ID if not provided
+      let finalVmId = newVmId;
+      if (!finalVmId) {
+        console.log(`⚙️  No VM ID provided, getting next available...`);
+        finalVmId = await this.getNextAvailableVmId();
       }
+      cloneData.newid = finalVmId;
 
       console.log(`🔄 Cloning ${sourceVmId} with data:`, cloneData);
       console.log(`🌐 POST to: /nodes/${node}/${type}/${sourceVmId}/clone`);
@@ -244,24 +293,9 @@ class ProxmoxClient {
 
       // If vmid wasn't specified, try to determine it from the next available ID
       // Note: Proxmox clone returns a task UPID, not the new vmid directly
-      // We'll need to wait for the task to complete and query it, or get next vmid
-      if (!newVmId) {
-        // Get list of all VMs to find the newly created one
-        // This is a workaround since Proxmox doesn't return the new vmid in clone response
-        try {
-          await this.waitForTask(result, node);
-          const servers = await this.getServers();
-          const newServer = servers.find(s => s.name === newVmName);
-          if (newServer) {
-            result.newid = newServer.vmid;
-            console.log(`✓ Auto-assigned VM ID: ${result.newid}`);
-          }
-        } catch (err) {
-          console.warn(`⚠️  Could not determine auto-assigned VM ID: ${err.message}`);
-        }
-      } else {
-        result.newid = newVmId;
-      }
+      // We always provide the newid upfront, so we know what the new ID is
+      result.newid = finalVmId;
+      console.log(`✓ VM cloned successfully with ID: ${result.newid}`);
 
       return result;
     } catch (error) {
