@@ -1086,6 +1086,8 @@ async function startServer() {
         const proxmoxPassword = await AppConfig.get('proxmox_password');
         const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
 
+        console.log(`📋 Clone: Proxmox config - host=${proxmoxHost}, user=${proxmoxUsername}, realm=${proxmoxRealm}, password=${proxmoxPassword ? '***SET***' : 'NOT SET'}`);
+
         if (!proxmoxHost || !proxmoxUsername || !proxmoxPassword) {
           return res.status(400).json({
             error: 'Proxmox not configured. Configure Proxmox credentials in Admin Settings → Configuration.'
@@ -1099,6 +1101,8 @@ async function startServer() {
           password: proxmoxPassword,
           realm: proxmoxRealm
         });
+
+        console.log(`🔄 Attempting to clone VM ${sourceVmId} to ${domainName}...`);
 
         // Router config is required for IP reservation
         const routerHost = await AppConfig.get('router_host');
@@ -1299,7 +1303,12 @@ async function startServer() {
           macAddress: dhcpReservationResult?.mac || null
         });
       } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error(`❌ Clone failed:`, error);
+        console.error(`Error details:`, error.response?.data || error.message);
+        res.status(500).json({ 
+          error: error.message,
+          details: error.response?.data?.errors || error.response?.statusText || 'See server logs for details'
+        });
       }
     });
 
