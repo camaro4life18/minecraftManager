@@ -718,18 +718,87 @@ export class MinecraftServerManager {
     try {
       console.log(`📥 Starting PaperMC update to version: ${version}`);
 
+      // Known latest builds (bypass outdated API)
+      const knownLatestBuilds = {
+        '1.21.11': 117,
+        '1.21.10': 129,
+        '1.21.5': 114,
+        '1.21.4': 232,
+        '1.21.1': 133
+      };
+
+      let latestBuild = null;
+
+      // Try website scraping first
+      try {
+        const websiteRes = await fetch('https://papermc.io/downloads/paper', { 
+          headers: { 'User-Agent': 'Mozilla/5.0' }
+        });
+        const html = await websiteRes.text();
+        const buildRegex = new RegExp(`paper-${version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)\\.jar`, 'g');
+        let match;
+        let maxBuild = null;
+        while ((match = buildRegex.exec(html)) !== null) {
+          const build = parseInt(match[1]);
+          if (!maxBuild || build > maxBuild) {
+            maxBuild = build;
+          }
+        }
+        if (maxBuild) {
+          latestBuild = maxBuild;
+          console.log(`✓ Found build ${latestBuild} for version ${version} from website`);
+        }
+      } catch (e) {
+        console.warn(`⚠️  Website scraping failed: ${e.message}`);
+      }
+
+      // Try version group API if website didn't work
+      if (!latestBuild) {
+        try {
+          const vgRes = await fetch(`https://api.papermc.io/v2/projects/paper/version_group/${version}`);
+          if (vgRes.ok) {
+            const vgData = await vgRes.json();
+            if (vgData.versions && vgData.versions.length > 0) {
+              const builds = vgData.versions.map(v => parseInt(v.split('-').pop()));
+              latestBuild = Math.max(...builds);
+              console.log(`✓ Found build ${latestBuild} for version ${version} from version_group`);
+            }
+          }
+        } catch (e) {
+          console.warn(`⚠️  Version group API failed: ${e.message}`);
+        }
+      }
+
+      // Try regular API as third option
+      if (!latestBuild) {
+        try {
+          const versionListRes = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}`);
+          if (versionListRes.ok) {
+            const versionData = await versionListRes.json();
+            if (versionData.builds && versionData.builds.length > 0) {
+              latestBuild = versionData.builds[versionData.builds.length - 1];
+              console.log(`✓ Found build ${latestBuild} for version ${version} from v2 API`);
+            }
+          }
+        } catch (e) {
+          console.warn(`⚠️  V2 API failed: ${e.message}`);
+        }
+      }
+
+      // Use known latest as final fallback
+      if (!latestBuild && knownLatestBuilds[version]) {
+        latestBuild = knownLatestBuilds[version];
+        console.log(`✓ Using known latest build ${latestBuild} for version ${version}`);
+      }
+
+      if (!latestBuild) {
+        throw new Error(`Could not determine latest build for version ${version}`);
+      }
+
       // Get the current jar info to see if we're using a symlink
       const symlinkCmd = `[ -L ${this.minecraftPath}/server.jar ] && readlink ${this.minecraftPath}/server.jar || echo ''`;
       const symlinkResult = await this.runAsMinecraft(symlinkCmd);
       const currentTarget = symlinkResult.stdout.trim();
-
-      // Fetch available builds for the version from PaperMC API
-      const versionListRes = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}`);
-      if (!versionListRes.ok) {
-        throw new Error(`Version ${version} not found in PaperMC`);
-      }
-      const versionData = await versionListRes.json();
-      const latestBuild = versionData.builds[versionData.builds.length - 1];
 
       // Construct the jar name
       const jarName = `paper-${version}-${latestBuild}.jar`;
@@ -741,10 +810,10 @@ export class MinecraftServerManager {
       const downloadResult = await this.runAsMinecraft(downloadCmd);
 
       if (downloadResult.code !== 0) {
-        throw new Error(`Failed to download PaperMC version ${version}`);
+        throw new Error(`Failed to download PaperMC version ${version} build ${latestBuild}`);
       }
 
-      console.log(`✓ Downloaded PaperMC version ${version}`);
+      console.log(`✓ Downloaded PaperMC version ${version} build ${latestBuild}`);
 
       // If server.jar is a symlink, update it; otherwise create one
       if (currentTarget) {
@@ -762,8 +831,9 @@ export class MinecraftServerManager {
       return {
         success: true,
         version,
+        build: latestBuild,
         jarName,
-        message: `Successfully updated to PaperMC ${version}. Restart server to apply changes.`
+        message: `Successfully updated to PaperMC ${version} build ${latestBuild}. Restart server to apply changes.`
       };
     } catch (error) {
       console.error('❌ Error updating PaperMC:', error);
