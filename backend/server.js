@@ -990,15 +990,28 @@ async function startServer() {
 
         res.json({ 
           nodes: nodes.map(n => ({ id: n.node, name: n.node })),
-          storage: storage.map(s => ({ 
-            id: s.storage, 
-            name: s.storage,
-            type: s.type,
-            available: s.avail,
-            used: s.used,
-            size: s.size
-          }))
+          storage: storage.map(s => {
+            const available = s.avail || s.available || 0;
+            const used = s.used || 0;
+            const total = s.size || s.maxfiles || (available + used) || 1;
+            return {
+              id: s.storage, 
+              name: s.storage,
+              type: s.type,
+              available: Math.max(0, available), // Ensure non-negative
+              used: Math.max(0, used),
+              size: Math.max(0, total)
+            };
+          })
+        };
+        
+        console.log(`✅ Sending ${result.storage.length} storage options to client`);
+        result.storage.forEach(st => {
+          const gb = Math.round(st.available / (1024 * 1024 * 1024));
+          console.log(`   ${st.name} (${st.type}): ${gb} GB available`);
         });
+        
+        res.json(result);
       } catch (error) {
         console.error('❌ Error fetching clone options:', error);
         res.status(500).json({ error: error.message || 'Failed to fetch clone options' });

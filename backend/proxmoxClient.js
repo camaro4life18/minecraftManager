@@ -79,8 +79,22 @@ class ProxmoxClient {
         (s.content || '').includes('images')
       );
       
-      console.log(`📦 All storage: ${storages.map(s => `${s.storage}(content:${s.content},enabled:${s.enabled})`).join(', ')}`);
-      console.log(`📦 Filtered storage (images only): ${filtered.map(s => `${s.storage}(${s.avail || 0} bytes available)`).join(', ')}`);
+      console.log(`📦 All storage retrieved: ${storages.length} total`);
+      const detailedStorage = filtered.map(s => {
+        const used = s.used || 0;
+        const avail = s.avail || 0;
+        const total = s.maxfiles || s.size || (used + avail);
+        return {
+          name: s.storage,
+          used,
+          avail,
+          total,
+          type: s.type,
+          content: s.content
+        };
+      });
+      
+      console.log('📦 Filtered storage details:', JSON.stringify(detailedStorage, null, 2));
       
       return filtered;
     } catch (error) {
