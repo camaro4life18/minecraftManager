@@ -79,23 +79,14 @@ function AdminSettings({ apiBase, token, isAdmin }) {
       }
 
       // Load Router config
-      try {
-        const routerResponse = await fetch(`${apiBase}/api/admin/config/router`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-
-        if (routerResponse.ok) {
-          const routerConfig = await routerResponse.json();
-          setRouter(prev => ({
-            ...prev,
-            host: routerConfig.host || '',
-            username: routerConfig.username || '',
-            password: '',
-            useHttps: routerConfig.useHttps !== false
-          }));
-        }
-      } catch (routerError) {
-        console.warn('Router config not available yet:', routerError.message);
+      if (config.router_host) {
+        setRouter(prev => ({
+          ...prev,
+          host: config.router_host?.value || '',
+          username: config.router_username?.value || '',
+          password: '',
+          useHttps: config.router_use_https?.value !== 'false'
+        }));
       }
     } catch (err) {
       console.error('Error loading configuration:', err);
@@ -228,45 +219,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     }
   };
 
-  const saveRouterConfiguration = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      setSuccess(null);
 
-      if (!router.host || !router.username || !router.password) {
-        setError('Router host, username, and password are required');
-        setLoading(false);
-        return;
-      }
-
-      const response = await fetch(`${apiBase}/api/admin/config/router`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          host: router.host,
-          username: router.username,
-          password: router.password,
-          useHttps: router.useHttps
-        })
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to save router configuration');
-      }
-
-      setSuccess('✓ Router configuration saved successfully');
-      setTimeout(() => setSuccess(null), 5000);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleSaveConfiguration = async () => {
     try {
@@ -305,6 +258,12 @@ function AdminSettings({ apiBase, token, isAdmin }) {
             port: velocity.port,
             apiKey: velocity.apiKey,
             backendNetwork: velocity.backendNetwork
+          } : null,
+          router: router.host && router.username && router.password ? {
+            host: router.host,
+            username: router.username,
+            password: router.password,
+            useHttps: router.useHttps
           } : null
         })
       });
@@ -655,14 +614,6 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                   disabled={loading || testingRouter || !router.host || !router.username || !router.password}
                 >
                   {testingRouter ? 'Testing...' : '🔗 Test Connection'}
-                </button>
-                <button
-                  type="button"
-                  className="btn-test"
-                  onClick={saveRouterConfiguration}
-                  disabled={loading || !router.host || !router.username || !router.password}
-                >
-                  💾 Save Router Config
                 </button>
               </div>
             </form>

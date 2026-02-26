@@ -526,7 +526,7 @@ async function startServer() {
     // Update configuration
     app.put('/api/admin/config', verifyToken, requireAdmin, async (req, res) => {
       try {
-        const { proxmox, velocity, node } = req.body;
+        const { proxmox, velocity, node, router } = req.body;
 
         if (proxmox) {
           await AppConfig.set('proxmox_host', proxmox.host, req.user.userId, 'Proxmox server hostname');
@@ -544,6 +544,13 @@ async function startServer() {
           if (velocity.port) await AppConfig.set('velocity_port', velocity.port.toString(), req.user.userId, 'Velocity server port');
           if (velocity.apiKey) await AppConfig.set('velocity_api_key', velocity.apiKey, req.user.userId, 'Velocity API key', 'password');
           if (velocity.backendNetwork) await AppConfig.set('velocity_backend_network', velocity.backendNetwork, req.user.userId, 'Velocity backend network range');
+        }
+
+        if (router) {
+          if (router.host) await AppConfig.set('router_host', router.host, req.user.userId, 'Router hostname or IP');
+          if (router.username) await AppConfig.set('router_username', router.username, req.user.userId, 'Router admin username');
+          if (router.password) await AppConfig.set('router_password', router.password, req.user.userId, 'Router admin password', 'password');
+          await AppConfig.set('router_use_https', (router.useHttps === true).toString(), req.user.userId, 'Router uses HTTPS');
         }
 
         res.json({ success: true, message: 'Configuration updated successfully' });
