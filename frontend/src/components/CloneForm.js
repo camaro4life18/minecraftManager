@@ -33,10 +33,15 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
         }
 
         const data = await response.json();
+        console.log('📋 Clone options response:', data);
         setNodes(data.nodes || []);
         setStorage(data.storage || []);
+        
+        if (!data.storage || data.storage.length === 0) {
+          console.warn('⚠️ No storage options returned from API');
+        }
       } catch (err) {
-        console.error('Failed to fetch clone options:', err);
+        console.error('❌ Failed to fetch clone options:', err);
         // Don't show error, just proceed without options
       } finally {
         setOptionsLoading(false);
@@ -225,7 +230,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
               name="targetNode"
               value={formData.targetNode}
               onChange={handleInputChange}
-              disabled={loading || optionsLoading || nodes.length === 0}
+              disabled={loading || optionsLoading}
             >
               <option value="">Auto-select (use source node)</option>
               {nodes.map(node => (
@@ -242,7 +247,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
               name="targetStorage"
               value={formData.targetStorage}
               onChange={handleInputChange}
-              disabled={loading || optionsLoading || storage.length === 0}
+              disabled={loading || optionsLoading}
             >
               <option value="">Auto-select (use source storage)</option>
               {storage.map(stor => (
@@ -270,9 +275,20 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
               disabled={loading}
               className="btn-submit"
             >
-              {loading ? 'Cloning...' : 'Clone Server'}
+              {loading && <span className="spinner"></span>}
+              {loading ? 'Cloning Server...' : 'Clone Server'}
             </button>
           </div>
+
+          {loading && (
+            <div className="clone-progress">
+              <p>⏳ <strong>Clone in progress...</strong></p>
+              <p style={{fontSize: '0.85em', color: '#666'}}>
+                This may take several minutes while the VM is created and configured.<br/>
+                Please do not close this window or refresh the page.
+              </p>
+            </div>
+          )}
         </form>
       </div>
     </div>

@@ -1236,7 +1236,7 @@ async function startServer() {
           // Get VM's MAC address from Proxmox with retry (VM might still be initializing)
           let networkConfig = null;
           let retryCount = 0;
-          const maxRetries = 5;
+          const maxRetries = 15;
           
           while (retryCount < maxRetries) {
             try {
@@ -1250,9 +1250,9 @@ async function startServer() {
             
             retryCount++;
             if (retryCount < maxRetries) {
-              // Wait 2 seconds before retry
-              console.log(`⏳ Waiting 2 seconds before retry (${retryCount}/${maxRetries})...`);
-              await new Promise(resolve => setTimeout(resolve, 2000));
+              // Wait 3 seconds before retry (longer wait for VM initialization)
+              console.log(`⏳ Waiting 3 seconds before retry (${retryCount}/${maxRetries})...`);
+              await new Promise(resolve => setTimeout(resolve, 3000));
             }
           }
           
@@ -1281,7 +1281,7 @@ async function startServer() {
             }
           } else {
             return res.status(500).json({
-              error: `Could not get MAC address for VM ${assignedVmId} after ${maxRetries} attempts.`
+              error: `Could not get MAC address for VM ${assignedVmId} after ${maxRetries} attempts (${maxRetries * 3} seconds). The VM may still be initializing. Please try again in a few moments.`
             });
           }
         } catch (routerError) {
