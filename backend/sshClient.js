@@ -398,12 +398,12 @@ export class MinecraftServerManager {
   }
 
   /**
-   * Execute a systemctl command using sudo as the configured user
+   * Execute a systemctl command using sudo
    * @private
    */
   async runSystemctl(action) {
-    const command = `sudo -n -u ${this.minecraftUser} systemctl ${action} minecraft.service`;
-    console.log(`📋 Running systemctl: ${command.substring(0, 80)}...`);
+    const command = `sudo -n systemctl ${action} minecraft.service`;
+    console.log(`📋 Running systemctl: ${command}`);
     return this.ssh.executeCommand(command);
   }
 
@@ -422,13 +422,14 @@ export class MinecraftServerManager {
         output: result.stdout
       };
     } catch (error) {
-      // Try alternative check if systemd service doesn't exist
+      // Try alternative check if systemd service doesn't work or sudo fails
       try {
-        const result = await this.ssh.executeCommand('pgrep -f "java.*minecraft"');
+        // Look for java process running server.jar in the minecraft path
+        const result = await this.ssh.executeCommand(`pgrep -f "java.*${this.minecraftPath}.*server.jar"`);
         return {
           running: result.code === 0,
           enabled: false,
-          output: result.stdout
+          output: result.stdout || 'Process check: ' + (result.code === 0 ? 'running' : 'not running')
         };
       } catch (e) {
         return {
