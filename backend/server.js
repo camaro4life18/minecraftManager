@@ -1186,10 +1186,30 @@ async function startServer() {
 
           console.log(`🌐 Creating DHCP reservation for VM ${assignedVmId}...`);
 
-          // Get VM's MAC address from Proxmox
-          const networkConfig = await cloneProxmox.getVMNetworkConfig(assignedVmId);
+          // Get VM's MAC address from Proxmox with retry (VM might still be initializing)
+          let networkConfig = null;
+          let retryCount = 0;
+          const maxRetries = 5;
           
-          if (networkConfig.primaryMac) {
+          while (retryCount < maxRetries) {
+            try {
+              networkConfig = await cloneProxmox.getVMNetworkConfig(assignedVmId);
+              if (networkConfig.primaryMac) {
+                break; // MAC found, exit retry loop
+              }
+            } catch (err) {
+              console.warn(`⚠️  Attempt ${retryCount + 1}: Could not get MAC, retrying...`);
+            }
+            
+            retryCount++;
+            if (retryCount < maxRetries) {
+              // Wait 2 seconds before retry
+              console.log(`⏳ Waiting 2 seconds before retry (${retryCount}/${maxRetries})...`);
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+          }
+          
+          if (networkConfig?.primaryMac) {
             const macAddress = networkConfig.primaryMac;
 
             console.log(`   MAC: ${macAddress}`);
@@ -1214,7 +1234,7 @@ async function startServer() {
             }
           } else {
             return res.status(500).json({
-              error: `Could not get MAC address for VM ${assignedVmId}.`
+              error: `Could not get MAC address for VM ${assignedVmId} after ${maxRetries} attempts.`
             });
           }
         } catch (routerError) {
