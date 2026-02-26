@@ -879,41 +879,6 @@ export class MinecraftServerManager {
     }
   }
 
-      if (downloadResult.code !== 0) {
-        throw new Error(`Failed to download PaperMC version ${version} build ${latestBuild}`);
-      }
-
-      console.log(`✓ Downloaded PaperMC version ${version} build ${latestBuild}`);
-
-      // If server.jar is a symlink, update it; otherwise create one
-      if (currentTarget) {
-        // Update the symlink to point to the new jar
-        const updateSymlinkCmd = `rm ${this.minecraftPath}/server.jar && ln -s ${jarPath} ${this.minecraftPath}/server.jar`;
-        await this.runAsMinecraft(updateSymlinkCmd);
-        console.log(`✓ Updated symlink to point to ${jarName}`);
-      } else {
-        // Create a symlink
-        const createSymlinkCmd = `ln -s ${jarPath} ${this.minecraftPath}/server.jar`;
-        await this.runAsMinecraft(createSymlinkCmd);
-        console.log(`✓ Created symlink to ${jarName}`);
-      }
-
-      return {
-        success: true,
-        version,
-        build: latestBuild,
-        jarName,
-        message: `Successfully updated to PaperMC ${version} build ${latestBuild}. Restart server to apply changes.`
-      };
-    } catch (error) {
-      console.error('❌ Error updating PaperMC:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
   /**
    * Find and get download URL for a Hangar plugin
    * @private
