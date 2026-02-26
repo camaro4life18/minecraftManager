@@ -329,4 +329,32 @@ describe('Hangar API', () => {
     expect(essentialsxUrl).toContain('hangarcdn.papermc.io');
     expect(essentialsxUrl).toContain('EssentialsX');
   });
+
+  describe('PaperMC Updates', () => {
+    test('updatePaperMC method should exist and be callable', async () => {
+      const mockSSH = new MockSSHClient();
+      const manager = new MinecraftServerManager(mockSSH, '/opt/minecraft/paper', 'minecraft');
+
+      // Verify the method exists
+      expect(typeof manager.updatePaperMC).toBe('function');
+      
+      // Call with invalid version - should return error object properly
+      const result = await manager.updatePaperMC('invalid-version-xyz');
+      
+      // Should return object with success property set to false
+      expect(result).toHaveProperty('success');
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    test('updatePaperMC should return error for non-existent versions', async () => {
+      const mockSSH = new MockSSHClient();
+      const manager = new MinecraftServerManager(mockSSH, '/opt/minecraft/paper', 'minecraft');
+
+      const result = await manager.updatePaperMC('1.0.0-invalid');
+      
+      expect(result.success).toBe(false);
+      expect(typeof result.error).toBe('string');
+    });
+  });
 });
