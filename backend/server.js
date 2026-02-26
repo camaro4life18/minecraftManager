@@ -988,7 +988,7 @@ async function startServer() {
         // Get storage
         const storage = await cloneProxmox.getStorage();
 
-        res.json({ 
+        const result = { 
           nodes: nodes.map(n => ({ id: n.node, name: n.node })),
           storage: storage.map(s => {
             const available = s.avail || s.available || 0;
