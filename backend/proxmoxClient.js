@@ -8,6 +8,7 @@ class ProxmoxClient {
     this.password = config.password;
     this.realm = config.realm || 'pam';
     this.token = null;
+    this.csrfToken = null;
     
     // Create custom HTTPS agent that ignores SSL certificate errors
     const httpsAgent = new https.Agent({
@@ -34,10 +35,13 @@ class ProxmoxClient {
       
       this.token = response.data.data.ticket;
       this.userId = response.data.data.username;
+      this.csrfToken = response.data.data.CSRFPreventionToken;
       this.api.defaults.headers.common['Cookie'] = `PVEAuthCookie=${this.token}`;
+      this.api.defaults.headers.common['CSRFPreventionToken'] = this.csrfToken;
       
       console.log(`✅ Proxmox authentication successful for ${this.userId}`);
       console.log(`🔑 Token set, Cookie header configured`);
+      console.log(`🔐 CSRF token set for write operations`);
       return this.token;
     } catch (error) {
       console.error(`❌ Proxmox authentication failed:`, error.response?.data || error.message);
@@ -222,10 +226,16 @@ class ProxmoxClient {
 
       console.log(`🔄 Cloning ${sourceVmId} with data:`, cloneData);
       console.log(`🌐 POST to: /nodes/${node}/${type}/${sourceVmId}/clone`);
+      console.log(`🔐 Using CSRF token: ${this.csrfToken ? 'SET' : 'MISSING'}`);
 
       const response = await this.api.post(
         `/nodes/${node}/${type}/${sourceVmId}/clone`,
-        cloneData
+        cloneData,
+        {
+          headers: {
+            'CSRFPreventionToken': this.csrfToken
+          }
+        }
       );
 
       const result = response.data.data;
