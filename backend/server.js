@@ -1080,6 +1080,26 @@ async function startServer() {
 
         const localIp = process.env.VELOCITY_BACKEND_NETWORK || '192.168.1';
 
+        // Load Proxmox config from database
+        const proxmoxHost = await AppConfig.get('proxmox_host');
+        const proxmoxUsername = await AppConfig.get('proxmox_username');
+        const proxmoxPassword = await AppConfig.get('proxmox_password');
+        const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
+
+        if (!proxmoxHost || !proxmoxUsername || !proxmoxPassword) {
+          return res.status(400).json({
+            error: 'Proxmox not configured. Configure Proxmox credentials in Admin Settings → Configuration.'
+          });
+        }
+
+        // Create Proxmox client with database config
+        const cloneProxmox = new ProxmoxClient({
+          host: proxmoxHost,
+          username: proxmoxUsername,
+          password: proxmoxPassword,
+          realm: proxmoxRealm
+        });
+
         // Router config is required for IP reservation
         const routerHost = await AppConfig.get('router_host');
         const routerUsername = await AppConfig.get('router_username');
@@ -1128,7 +1148,7 @@ async function startServer() {
 
         // Use domain name as the VM name
         const newVmName = domainName;
-        const result = await proxmox.cloneServer(sourceVmId, newVmId, newVmName);
+        const result = await cloneProxmox.cloneServer(sourceVmId, newVmId, newVmName);
         
         // Extract the actual assigned VM ID from the result
         // If newVmId was provided, use it; otherwise Proxmox assigned one
