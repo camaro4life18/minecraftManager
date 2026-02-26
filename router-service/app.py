@@ -72,12 +72,19 @@ async def _with_router(host: str, username: str, password: str, use_ssl: bool, f
         session=session,
     )
 
-    await router.async_connect()
     try:
-        return await fn(router)
+        await router.async_connect()
+        result = await fn(router)
+        return result
     finally:
-        await router.async_disconnect()
-        await session.close()
+        try:
+            await router.async_disconnect()
+        except Exception as e:
+            print(f"Error disconnecting router: {e}")
+        try:
+            await session.close()
+        except Exception as e:
+            print(f"Error closing session: {e}")
 
 
 async def _get_reservations(host: str, username: str, password: str, use_ssl: bool):
@@ -148,14 +155,20 @@ def test_connection():
         return jsonify({"success": False, "error": "Missing router credentials"}), 400
 
     try:
+        print(f"Testing router connection to {host} (SSL: {use_ssl})")
         reservations = run_async(_get_reservations(host, username, password, use_ssl))
+        print(f"Connection successful. Found {len(reservations)} reservations")
         return jsonify({
             "success": True,
             "message": f"Connected successfully. Found {len(reservations)} DHCP reservations.",
             "reservations": reservations,
         })
     except Exception as exc:
-        return jsonify({"success": False, "error": str(exc)}), 500
+        error_msg = str(exc)
+        print(f"Router connection failed: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": error_msg}), 500
 
 
 @app.post("/dhcp-reservations")
