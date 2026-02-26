@@ -1,4 +1,5 @@
 import express from 'express';
+import axios from 'axios';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
@@ -9,7 +10,6 @@ import multer from 'multer';
 import path from 'path';
 import ProxmoxClient from './proxmoxClient.js';
 import VelocityClient from './velocityClient.js';
-import AsusRouterClient from './asusRouterClient.js';
 import SSHClient, { MinecraftServerManager } from './sshClient.js';
 import { 
   initializeDatabase, 
@@ -39,6 +39,19 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5000;
+const routerServiceUrl = process.env.ROUTER_SERVICE_URL || 'http://localhost:7001';
+
+const routerServicePost = async (path, payload) => {
+  try {
+    const response = await axios.post(`${routerServiceUrl}${path}`, payload, {
+      timeout: 10000
+    });
+    return response.data;
+  } catch (error) {
+    const message = error.response?.data?.error || error.message;
+    throw new Error(message);
+  }
+};
 
 // Rate limiting configurations
 const generalLimiter = rateLimit({
@@ -624,15 +637,13 @@ async function startServer() {
 
         try {
           console.log(`🧪 Testing ASUS router connection to ${host}...`);
-          const testRouter = new AsusRouterClient({ 
-            host, 
-            username, 
-            password, 
-            useHttps: useHttps !== false 
+          const result = await routerServicePost('/test', {
+            host,
+            username,
+            password,
+            useHttps: useHttps !== false
           });
-          
-          const result = await testRouter.testConnection();
-          
+
           res.json(result);
         } catch (error) {
           res.json({ 
@@ -701,15 +712,14 @@ async function startServer() {
           });
         }
 
-        const router = new AsusRouterClient({
+        const result = await routerServicePost('/dhcp-reservations', {
           host: routerHost,
           username: routerUsername,
           password: routerPassword,
           useHttps: routerUseHttps
         });
 
-        const reservations = await router.getDHCPReservations();
-        res.json({ reservations });
+        res.json({ reservations: result.reservations || [] });
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
@@ -1076,14 +1086,14 @@ async function startServer() {
         }
 
         // Pick an available IP from 192.168.1.225-230 (or configured network prefix)
-        const router = new AsusRouterClient({
+        const reservationsResult = await routerServicePost('/dhcp-reservations', {
           host: routerHost,
           username: routerUsername,
           password: routerPassword,
           useHttps: routerUseHttps
         });
 
-        const reservations = await router.getDHCPReservations();
+        const reservations = reservationsResult.reservations || [];
         const usedIps = new Set(reservations.map(r => r.ip));
         const ipRangeStart = 225;
         const ipRangeEnd = 230;
@@ -1154,11 +1164,15 @@ async function startServer() {
             console.log(`   MAC: ${macAddress}`);
             console.log(`   Target IP: ${targetIp}`);
 
-            dhcpReservationResult = await router.addDHCPReservation(
-              macAddress,
-              targetIp,
-              domainName
-            );
+            dhcpReservationResult = await routerServicePost('/dhcp-reservation', {
+              host: routerHost,
+              username: routerUsername,
+              password: routerPassword,
+              useHttps: routerUseHttps,
+              mac: macAddress,
+              ip: targetIp,
+              name: domainName
+            });
 
             if (dhcpReservationResult.success) {
               console.log(`✅ DHCP reservation created: ${macAddress} → ${targetIp}`);

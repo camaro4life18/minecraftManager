@@ -38,6 +38,7 @@ services:
       - PROXMOX_PASSWORD=${PROXMOX_PASSWORD}
       - PROXMOX_REALM=${PROXMOX_REALM:-pam}
       - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
+      - ROUTER_SERVICE_URL=${ROUTER_SERVICE_URL:-http://localhost:7001}
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,6 +49,16 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+  router-service:
+    build:
+      context: ./router-service
+      dockerfile: Dockerfile
+    container_name: minecraft-manager-router
+    network_mode: host
+    environment:
+      - ROUTER_SERVICE_PORT=7001
+    restart: unless-stopped
 
   frontend:
     build:
