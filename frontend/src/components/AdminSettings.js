@@ -16,16 +16,25 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     backendNetwork: '192.168.1'
   });
 
+  const [router, setRouter] = useState({
+    host: '',
+    username: '',
+    password: '',
+    useHttps: true
+  });
+
   const [node, setNode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [testingProxmox, setTestingProxmox] = useState(false);
   const [testingVelocity, setTestingVelocity] = useState(false);
+  const [testingRouter, setTestingRouter] = useState(false);
   const [proxmoxNodes, setProxmoxNodes] = useState([]);
   const [showPasswords, setShowPasswords] = useState({
     proxmoxPassword: false,
-    velocityApiKey: false
+    velocityApiKey: false,
+    routerPassword: false
   });
   const [activeTab, setActiveTab] = useState('proxmox');
 
@@ -68,6 +77,26 @@ function AdminSettings({ apiBase, token, isAdmin }) {
           backendNetwork: config.velocity_backend_network?.value || '192.168.1'
         }));
       }
+
+      // Load Router config
+      try {
+        const routerResponse = await fetch(`${apiBase}/api/admin/config/router`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (routerResponse.ok) {
+          const routerConfig = await routerResponse.json();
+          setRouter(prev => ({
+            ...prev,
+            host: routerConfig.host || '',
+            username: routerConfig.username || '',
+            password: '',
+            useHttps: routerConfig.useHttps !== false
+          }));
+        }
+      } catch (routerError) {
+        console.warn('Router config not available yet:', routerError.message);
+      }
     } catch (err) {
       console.error('Error loading configuration:', err);
       setError('Failed to load configuration');
@@ -87,6 +116,14 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     setVelocity(prev => ({
       ...prev,
       [name]: name === 'port' ? parseInt(value) : value
+    }));
+  };
+
+  const handleRouterChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    setRouter(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
     }));
   };
 
@@ -155,6 +192,79 @@ function AdminSettings({ apiBase, token, isAdmin }) {
       setError(`Connection error: ${err.message}`);
     } finally {
       setTestingVelocity(false);
+    }
+  };
+
+  const testRouterConnection = async () => {
+    try {
+      setTestingRouter(true);
+      setError(null);
+
+      const response = await fetch(`${apiBase}/api/admin/config/test-router`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          host: router.host,
+          username: router.username,
+          password: router.password,
+          useHttps: router.useHttps
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setSuccess('✓ Router connection successful');
+      } else {
+        setError(`✗ Connection failed: ${result.error}`);
+      }
+    } catch (err) {
+      setError(`Connection error: ${err.message}`);
+    } finally {
+      setTestingRouter(false);
+    }
+  };
+
+  const saveRouterConfiguration = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+
+      if (!router.host || !router.username || !router.password) {
+        setError('Router host, username, and password are required');
+        setLoading(false);
+        return;
+      }
+
+      const response = await fetch(`${apiBase}/api/admin/config/router`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          host: router.host,
+          username: router.username,
+          password: router.password,
+          useHttps: router.useHttps
+        })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to save router configuration');
+      }
+
+      setSuccess('✓ Router configuration saved successfully');
+      setTimeout(() => setSuccess(null), 5000);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -242,6 +352,12 @@ function AdminSettings({ apiBase, token, isAdmin }) {
           onClick={() => setActiveTab('velocity')}
         >
           Velocity Configuration
+        </button>
+        <button
+          className={`tab-button ${activeTab === 'router' ? 'active' : ''}`}
+          onClick={() => setActiveTab('router')}
+        >
+          Router Configuration
         </button>
       </div>
 
@@ -449,6 +565,104 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                   disabled={loading || testingVelocity || !velocity.host || !velocity.apiKey}
                 >
                   {testingVelocity ? 'Testing...' : '🔗 Test Connection'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {activeTab === 'router' && (
+          <div className="settings-section">
+            <h3>ASUS Router Configuration (Required for cloning)</h3>
+            <p className="section-description">
+              Configure ASUS router access for DHCP reservations. The clone process uses this to
+              reserve an IP in the 192.168.1.225-230 range.
+            </p>
+
+            <form className="settings-form">
+              <div className="form-group">
+                <label htmlFor="router-host">Router Host/IP:</label>
+                <input
+                  type="text"
+                  id="router-host"
+                  name="host"
+                  value={router.host}
+                  onChange={handleRouterChange}
+                  placeholder="e.g., 192.168.1.1"
+                  disabled={loading}
+                />
+                <small>The hostname or IP address of your ASUS router</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="router-username">Username:</label>
+                <input
+                  type="text"
+                  id="router-username"
+                  name="username"
+                  value={router.username}
+                  onChange={handleRouterChange}
+                  placeholder="admin"
+                  disabled={loading}
+                />
+                <small>Router admin username</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="router-password">
+                  Password:
+                  <button
+                    type="button"
+                    className="show-password-btn"
+                    onClick={() => setShowPasswords(prev => ({
+                      ...prev,
+                      routerPassword: !prev.routerPassword
+                    }))}
+                  >
+                    {showPasswords.routerPassword ? '🙈' : '👁️'}
+                  </button>
+                </label>
+                <input
+                  type={showPasswords.routerPassword ? 'text' : 'password'}
+                  id="router-password"
+                  name="password"
+                  value={router.password}
+                  onChange={handleRouterChange}
+                  placeholder="Router password"
+                  disabled={loading}
+                />
+                <small>Router admin password</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="router-use-https">Use HTTPS:</label>
+                <input
+                  type="checkbox"
+                  id="router-use-https"
+                  name="useHttps"
+                  checked={router.useHttps}
+                  onChange={handleRouterChange}
+                  disabled={loading}
+                />
+                <small>Most ASUS routers use HTTPS for the admin interface</small>
+              </div>
+
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="btn-test"
+                  onClick={testRouterConnection}
+                  disabled={loading || testingRouter || !router.host || !router.username || !router.password}
+                >
+                  {testingRouter ? 'Testing...' : '🔗 Test Connection'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-test"
+                  onClick={saveRouterConfiguration}
+                  disabled={loading || !router.host || !router.username || !router.password}
+                >
+                  💾 Save Router Config
                 </button>
               </div>
             </form>
