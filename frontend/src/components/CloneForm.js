@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import '../styles/CloneForm.css';
 
 function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
@@ -6,10 +6,45 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
     newVmId: '',
     domainName: '',
     seedOption: 'random',
-    customSeed: ''
+    customSeed: '',
+    targetNode: '',
+    targetStorage: ''
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [nodes, setNodes] = useState([]);
+  const [storage, setStorage] = useState([]);
+  const [optionsLoading, setOptionsLoading] = useState(true);
+
+  // Fetch available nodes and storage when component mounts
+  useEffect(() => {
+    const fetchCloneOptions = async () => {
+      try {
+        setOptionsLoading(true);
+        const response = await fetch(`${apiBase}/api/clone-options`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Failed to fetch clone options');
+        }
+
+        const data = await response.json();
+        setNodes(data.nodes || []);
+        setStorage(data.storage || []);
+      } catch (err) {
+        console.error('Failed to fetch clone options:', err);
+        // Don't show error, just proceed without options
+      } finally {
+        setOptionsLoading(false);
+      }
+    };
+
+    fetchCloneOptions();
+  }, [apiBase, token]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -67,6 +102,14 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
       // Only include newVmId if user specified one, otherwise Proxmox will auto-assign
       if (formData.newVmId) {
         payload.newVmId = parseInt(formData.newVmId);
+      }
+
+      // Include target node and storage if selected
+      if (formData.targetNode) {
+        payload.targetNode = formData.targetNode;
+      }
+      if (formData.targetStorage) {
+        payload.targetStorage = formData.targetStorage;
       }
 
       const response = await fetch(`${apiBase}/api/servers/clone`, {
@@ -172,6 +215,43 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
                 <small>You can use any seed value. Leave blank to auto-generate a random seed.</small>
               </div>
             )}
+          </div>
+
+          {/* Target Node and Storage Selection */}
+          <div className="form-group">
+            <label htmlFor="targetNode">Target Node (optional):</label>
+            <select
+              id="targetNode"
+              name="targetNode"
+              value={formData.targetNode}
+              onChange={handleInputChange}
+              disabled={loading || optionsLoading || nodes.length === 0}
+            >
+              <option value="">Auto-select (use source node)</option>
+              {nodes.map(node => (
+                <option key={node.id} value={node.id}>{node.name}</option>
+              ))}
+            </select>
+            <small>Select which Proxmox node to clone to. Leave blank to use the same node as source.</small>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="targetStorage">Target Storage (optional):</label>
+            <select
+              id="targetStorage"
+              name="targetStorage"
+              value={formData.targetStorage}
+              onChange={handleInputChange}
+              disabled={loading || optionsLoading || storage.length === 0}
+            >
+              <option value="">Auto-select (use source storage)</option>
+              {storage.map(stor => (
+                <option key={stor.id} value={stor.id}>
+                  {stor.name} ({stor.type}) - {Math.round(stor.available / (1024 * 1024 * 1024))} GB available
+                </option>
+              ))}
+            </select>
+            <small>Select which storage to clone to. Useful if source storage is full. Leave blank to use the same storage as source.</small>
           </div>
 
           {error && <div className="error-message">{error}</div>}

@@ -63,6 +63,43 @@ class ProxmoxClient {
     }
   }
 
+  // Get all storage
+  async getStorage() {
+    if (!this.token) {
+      await this.authenticate();
+    }
+
+    try {
+      const response = await this.api.get('/storage');
+      // Filter for storage that supports disk images and is enabled
+      const storages = response.data.data || [];
+      return storages.filter(s => 
+        s.enabled && 
+        (s.content || '').includes('images')
+      );
+    } catch (error) {
+      throw new Error(`Failed to fetch storage: ${error.message}`);
+    }
+  }
+
+  // Get storage available on a specific node
+  async getNodeStorage(nodeName) {
+    if (!this.token) {
+      await this.authenticate();
+    }
+
+    try {
+      const response = await this.api.get(`/nodes/${nodeName}/storage`);
+      // Filter for storage that supports disk images and is enabled
+      const storages = response.data.data || [];
+      return storages.filter(s => 
+        s.enabled && 
+        (s.content || '').includes('images')
+      );
+    } catch (error) {
+      throw new Error(`Failed to fetch storage for node ${nodeName}: ${error.message}`);
+    }
+  }
   // Get all servers (LXC and QEMU)
   async getServers() {
     if (!this.token) {
@@ -241,8 +278,9 @@ class ProxmoxClient {
   }
   // Clone a server
   // If newVmId is not provided, Proxmox will auto-assign the next available VM ID
-  async cloneServer(sourceVmId, newVmId, newVmName) {
-    console.log(`🔄 cloneServer called: sourceVmId=${sourceVmId}, newVmId=${newVmId}, newVmName=${newVmName}`);
+  // targetNode and targetStorage can override the default source node/storage
+  async cloneServer(sourceVmId, newVmId, newVmName, targetNode = null, targetStorage = null) {
+    console.log(`🔄 cloneServer called: sourceVmId=${sourceVmId}, newVmId=${newVmId}, newVmName=${newVmName}, targetNode=${targetNode}, targetStorage=${targetStorage}`);
     console.log(`🔑 Current token state: ${this.token ? 'TOKEN EXISTS' : 'NO TOKEN'}`);
     
     if (!this.token) {
@@ -273,13 +311,26 @@ class ProxmoxClient {
       }
       cloneData.newid = finalVmId;
 
+      // Use target storage if specified, otherwise Proxmox will use the same storage as the source
+      if (targetStorage) {
+        cloneData.storage = targetStorage;
+        console.log(`💾 Target storage: ${targetStorage}`);
+      }
+
+      // Determine which node to clone to
+      let targetCloneNode = node;
+      if (targetNode && targetNode !== node) {
+        targetCloneNode = targetNode;
+        console.log(`🖥️  Cloning to target node: ${targetNode}`);
+      }
+
       console.log(`🔄 Cloning ${sourceVmId} with data:`, cloneData);
-      console.log(`🌐 POST to: /nodes/${node}/${type}/${sourceVmId}/clone`);
+      console.log(`🌐 POST to: /nodes/${targetCloneNode}/${type}/${sourceVmId}/clone`);
       console.log(`🔐 Using CSRF token: ${this.csrfToken ? 'SET' : 'MISSING'}`);
       console.log(`📤 Cookie header:`, this.api.defaults.headers.common['Cookie']);
 
       const response = await this.api.post(
-        `/nodes/${node}/${type}/${sourceVmId}/clone`,
+        `/nodes/${targetCloneNode}/${type}/${sourceVmId}/clone`,
         cloneData,
         {
           headers: {

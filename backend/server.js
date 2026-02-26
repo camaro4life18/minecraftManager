@@ -959,8 +959,52 @@ async function startServer() {
       }
     });
 
-    // Add a server to managed list - protected (admin only)
-    app.post('/api/servers', verifyToken, async (req, res) => {
+    // Get clone options (nodes and storage) - protected
+    app.get('/api/clone-options', verifyToken, async (req, res) => {
+      try {
+        // Load Proxmox config from database
+        const proxmoxHost = await AppConfig.get('proxmox_host');
+        const proxmoxUsername = await AppConfig.get('proxmox_username');
+        const proxmoxPassword = await AppConfig.get('proxmox_password');
+        const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
+
+        if (!proxmoxHost || !proxmoxUsername || !proxmoxPassword) {
+          return res.status(400).json({
+            error: 'Proxmox not configured'
+          });
+        }
+
+        // Create Proxmox client with database config
+        const cloneProxmox = new ProxmoxClient({
+          host: proxmoxHost,
+          username: proxmoxUsername,
+          password: proxmoxPassword,
+          realm: proxmoxRealm
+        });
+
+        // Get nodes
+        const nodes = await cloneProxmox.getNodes();
+        
+        // Get storage
+        const storage = await cloneProxmox.getStorage();
+
+        res.json({ 
+          nodes: nodes.map(n => ({ id: n.node, name: n.node })),
+          storage: storage.map(s => ({ 
+            id: s.storage, 
+            name: s.storage,
+            type: s.type,
+            available: s.avail,
+            used: s.used,
+            size: s.size
+          }))
+        });
+      } catch (error) {
+        console.error('❌ Error fetching clone options:', error);
+        res.status(500).json({ error: error.message || 'Failed to fetch clone options' });
+      }
+    });
+
       try {
         // Check if user is admin
         if (req.user.role !== 'admin') {
@@ -1060,7 +1104,7 @@ async function startServer() {
           return res.status(403).json({ error: 'You do not have permission to clone servers' });
         }
 
-        const { sourceVmId, newVmId, domainName, seed } = req.body;
+        const { sourceVmId, newVmId, domainName, seed, targetNode, targetStorage } = req.body;
         
         // newVmId is now optional - Proxmox will auto-assign if not provided
         if (!sourceVmId || !domainName) {
@@ -1152,7 +1196,8 @@ async function startServer() {
 
         // Use domain name as the VM name
         const newVmName = domainName;
-        const result = await cloneProxmox.cloneServer(sourceVmId, newVmId, newVmName);
+        console.log(`📍 Clone parameters - targetNode: ${targetNode}, targetStorage: ${targetStorage}`);
+        const result = await cloneProxmox.cloneServer(sourceVmId, newVmId, newVmName, targetNode, targetStorage);
         
         // Extract the actual assigned VM ID from the result
         // If newVmId was provided, use it; otherwise Proxmox assigned one
