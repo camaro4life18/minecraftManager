@@ -1,0 +1,22 @@
+### Python
+
+__pycache__/
+
+dist/
+*.egg-info
+
+.python-version
+.venv*
+venv*
+# Pytest
+.coverage
+pytest/
+
+### Other
+# Test
+local_test*.py
+local/
+
+# VS Code
+.vscode/launch.json
+.vscode/settings.json

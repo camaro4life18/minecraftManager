@@ -1,0 +1,214 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "**/*.py"
+      - ".github/workflows/**"
+      - "pyproject.toml"
+      - "setup.cfg"
+      - "requirements*.txt"
+      - "uv.lock"
+  pull_request:
+    paths:
+      - "**/*.py"
+      - "tests/**/*.py"
+      - "pyproject.toml"
+      - "setup.cfg"
+      - "requirements*.txt"
+      - "uv.lock"
+  schedule:
+    - cron: "0 0 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    name: Preparation
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    strategy:
+      matrix:
+        python-version: [3.11, 3.12, 3.13]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up UV and Python
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install the project
+        run: uv sync --all-groups
+
+  ruff-format:
+    name: Ruff Format
+    needs: prepare
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up UV and Python
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: 3.13
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install the project
+        run: uv sync --all-groups
+
+      - name: Run Ruff Format
+        run: uv run pre-commit run --hook-stage manual ruff-format --all-files --show-diff-on-failure
+
+  ruff-check:
+    name: Ruff Check
+    needs: prepare
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up UV and Python
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: 3.13
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install the project
+        run: uv sync --all-groups
+
+      - name: Run Ruff Check
+        run: uv run pre-commit run --hook-stage manual ruff-check --all-files --show-diff-on-failure
+
+  unit-tests:
+    name: Unit Tests
+    needs:
+      - ruff-format
+      - ruff-check
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    strategy:
+      matrix:
+        python-version: [3.11, 3.12, 3.13]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up UV and Python
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install the project
+        run: uv sync --all-groups
+
+      - name: Run unit tests
+        run: |
+          uv run pytest --cov=asusrouter --cov-report=xml:unit-tests-cov-${{ matrix.python-version }}.xml -k 'not test_devices'
+
+      - name: Upload coverage to artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: unit-tests-cov-${{ matrix.python-version }}
+          path: unit-tests-cov-${{ matrix.python-version }}.xml
+
+  device-tests:
+    name: Device Tests
+    needs:
+      - ruff-format
+      - ruff-check
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    strategy:
+      matrix:
+        python-version: [3.11, 3.12, 3.13]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up UV and Python
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install the project
+        run: uv sync --all-groups
+
+      - name: Run real-data tests
+        run: |
+          uv run pytest tests/test_devices.py --cov=asusrouter --cov-report=xml:real-data-tests-cov-${{ matrix.python-version }}.xml --log-cli-level=INFO
+
+      - name: Upload coverage to artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: real-data-tests-cov-${{ matrix.python-version }}
+          path: real-data-tests-cov-${{ matrix.python-version }}.xml
+
+  codecov:
+    name: Codecov
+    needs: [unit-tests, device-tests]
+    runs-on: ubuntu-latest
+
+    if: ${{ github.actor != 'dependabot[bot]' }}
+
+    permissions:
+      contents: read
+      checks: write
+
+    strategy:
+      matrix:
+        python-version: [3.11, 3.12, 3.13]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Download unit-tests coverage from artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: unit-tests-cov-${{ matrix.python-version }}
+          path: .
+
+      - name: Download real-data-tests coverage from artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: real-data-tests-cov-${{ matrix.python-version }}
+          path: .
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5.5.2
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+          files: unit-tests-cov-${{ matrix.python-version }}.xml,real-data-tests-cov-${{ matrix.python-version }}.xml

@@ -1,0 +1,28 @@
+exclude-labels:
+  - 'build'
+  - 'github'
+
+categories:
+  - title: "💥 Breaking Changes"
+    label: "breaking"
+  - title: "🚀 Features"
+    label: "enhancement"
+  - title: "🐞 Fixes"
+    label: "bug"
+  - title: "🐎 Performance"
+    label: "performance"
+  - title: "🚨 Testing"
+    label: "testing"
+  - title: "📚 Documentation"
+    label: "documentation"
+  - title: "🔨 Refactoring"
+    label: "refactoring"
+  - title: "📦 Dependencies"
+    labels: 
+      - "dependencies"
+
+template: |
+  ## Changes
+
+  $CHANGES
+
