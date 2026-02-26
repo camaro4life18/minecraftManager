@@ -227,6 +227,7 @@ class ProxmoxClient {
       console.log(`🔄 Cloning ${sourceVmId} with data:`, cloneData);
       console.log(`🌐 POST to: /nodes/${node}/${type}/${sourceVmId}/clone`);
       console.log(`🔐 Using CSRF token: ${this.csrfToken ? 'SET' : 'MISSING'}`);
+      console.log(`📤 Cookie header:`, this.api.defaults.headers.common['Cookie']);
 
       const response = await this.api.post(
         `/nodes/${node}/${type}/${sourceVmId}/clone`,
@@ -264,6 +265,8 @@ class ProxmoxClient {
 
       return result;
     } catch (error) {
+      const errorDetails = error.response?.data?.errors || error.response?.data || error.message;
+      console.error(`❌ Clone request failed:`, JSON.stringify(errorDetails, null, 2));
       throw new Error(`Failed to clone server: ${error.message}`);
     }
   }
