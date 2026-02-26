@@ -242,6 +242,7 @@ def test_connection():
 
     try:
         print(f"Testing router connection to {host} (SSL: {use_ssl})")
+        print(f"[DEBUG] Calling _get_reservations...")
         reservations = run_async(_get_reservations(host, username, password, use_ssl))
         print(f"Connection successful. Found {len(reservations)} reservations")
         return jsonify({
@@ -294,10 +295,15 @@ def add_reservation():
         return jsonify({"error": "Missing mac or ip"}), 400
 
     try:
-        run_async(_add_reservation(host, username, password, use_ssl, mac, ip, name))
+        print(f"[DHCP] add_reservation: Calling async _add_reservation...")
+        result = run_async(_add_reservation(host, username, password, use_ssl, mac, ip, name))
+        print(f"[DHCP] add_reservation: Success! Result: {result}")
         return jsonify({"success": True, "mac": mac.upper(), "ip": ip, "name": name})
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        print(f"[DHCP] add_reservation: ERROR - {type(exc).__name__}: {exc}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"{type(exc).__name__}: {str(exc)}"}), 500
 
 
 if __name__ == "__main__":
