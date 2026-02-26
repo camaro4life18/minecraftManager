@@ -507,6 +507,59 @@ export class MinecraftServerManager {
   }
 
   /**
+   * Configure a fresh Minecraft world with a new seed
+   * This deletes existing world data and updates server.properties
+   * Use this after cloning a server to ensure a new world is generated
+   * 
+   * @param {string} seed - The world seed to use
+   * @param {string} levelName - The world name (default: 'world')
+   * @returns {Promise<{success: boolean, message: string}>}
+   */
+  async setupFreshWorld(seed, levelName = 'world') {
+    try {
+      console.log(`🌍 Setting up fresh world with seed: ${seed}`);
+      
+      // Step 1: Stop the server if running
+      console.log('🛑 Stopping Minecraft server...');
+      const stopResult = await this.runSystemctl('stop');
+      if (stopResult.code !== 0 && !stopResult.stderr.includes('not loaded')) {
+        console.warn('⚠️  Stop command returned non-zero:', stopResult.stderr);
+        // Continue anyway - server might not be running
+      }
+
+      // Step 2: Delete world directories
+      console.log('🗑️  Deleting old world data...');
+      const worldDirs = [levelName, `${levelName}_nether`, `${levelName}_the_end`];
+      
+      for (const dir of worldDirs) {
+        const deleteCmd = `cd ${this.minecraftPath} && [ -d "${dir}" ] && rm -rf "${dir}" || echo "Directory ${dir} does not exist"`;
+        const result = await this.runAsMinecraft(deleteCmd);
+        console.log(`   Deleted ${dir}: ${result.stdout.trim() || 'Done'}`);
+      }
+
+      // Step 3: Update server.properties with new seed
+      console.log('📝 Updating server.properties with new seed...');
+      await this.updateServerProperties({
+        'level-seed': seed,
+        'level-name': levelName
+      });
+
+      console.log('✅ Fresh world setup complete! New world will generate on next server start.');
+      
+      return {
+        success: true,
+        message: `World reset complete. New world with seed ${seed} will generate on server start.`
+      };
+    } catch (error) {
+      console.error('❌ Failed to setup fresh world:', error);
+      return {
+        success: false,
+        message: `Failed to setup fresh world: ${error.message}`
+      };
+    }
+  }
+
+  /**
    * Get Minecraft server version
    */
   async getVersion() {

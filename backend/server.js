@@ -968,6 +968,56 @@ async function startServer() {
         await ServerCloneLog.create(req.user.userId, sourceVmId, assignedVmId, newVmName, 'pending');
         await ManagedServer.create(assignedVmId, req.user.userId, newVmName, serverSeed);
 
+        // Copy SSH configuration from source to destination
+        // This allows us to immediately configure the world without manual SSH setup
+        const localIp = process.env.VELOCITY_BACKEND_NETWORK || '192.168.1';
+        const ipPattern = `${localIp}.{}`;
+        const sshConfigCopied = await ManagedServer.copySSHConfig(sourceVmId, assignedVmId, ipPattern);
+
+        // Set up fresh world with the new seed
+        // This will delete old world data and configure server.properties
+        let worldSetupResult = null;
+        if (sshConfigCopied && assignedVmId) {
+          try {
+            console.log(`🌍 Configuring fresh world for VM ${assignedVmId} with seed ${serverSeed}...`);
+            
+            // Wait a moment for the VM to be fully cloned and accessible
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            // Get SSH client and manager
+            const sshConfig = await ManagedServer.getSSHConfig(assignedVmId);
+            if (sshConfig && sshConfig.ssh_configured) {
+              const ssh = new SSHClient({
+                host: sshConfig.ssh_host,
+                port: sshConfig.ssh_port,
+                username: sshConfig.ssh_username,
+                privateKey: sshConfig.ssh_private_key
+              });
+
+              const manager = new MinecraftServerManager(
+                ssh,
+                sshConfig.minecraft_path,
+                sshConfig.minecraft_user || 'minecraft'
+              );
+
+              worldSetupResult = await manager.setupFreshWorld(serverSeed);
+              
+              if (worldSetupResult.success) {
+                console.log(`✅ World setup successful for VM ${assignedVmId}`);
+              } else {
+                console.warn(`⚠️  World setup had issues: ${worldSetupResult.message}`);
+              }
+            }
+          } catch (worldError) {
+            console.error(`⚠️  Failed to setup fresh world (non-fatal):`, worldError.message);
+            // Don't fail the entire clone operation if world setup fails
+            // User can always manually configure later
+          }
+        } else {
+          console.log(`⚠️  SSH config not available for VM ${assignedVmId}, skipping automatic world setup`);
+          console.log(`   User will need to manually configure SSH and world settings`);
+        }
+
         // Try to add to Velocity server list (optional - won't fail clone if it fails)
         // Note: This assumes the new server IP will be on the Proxmox local network
         // You may need to adjust the IP or add additional configuration
@@ -975,7 +1025,6 @@ async function startServer() {
           // Extract the numeric part to get the potential IP on local network
           // For example, minecraft02 might be 192.168.x.102 on your network
           const numericPart = assignedVmId.toString();
-          const localIp = process.env.VELOCITY_BACKEND_NETWORK || '192.168.1';
           const serverIp = `${localIp}.${numericPart}`;
           
           const velocityResult = await velocity.addServer(
@@ -989,7 +1038,14 @@ async function startServer() {
           }
         }
 
-        res.json({ success: true, taskId: result, vmid: assignedVmId, domainName, seed: serverSeed });
+        res.json({ 
+          success: true, 
+          taskId: result, 
+          vmid: assignedVmId, 
+          domainName, 
+          seed: serverSeed,
+          worldSetup: worldSetupResult ? worldSetupResult.success : false
+        });
       } catch (error) {
         res.status(500).json({ error: error.message });
       }

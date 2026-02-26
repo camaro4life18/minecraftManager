@@ -474,6 +474,61 @@ export const ManagedServer = {
     return result.rows[0] || null;
   },
 
+  /**
+   * Copy SSH config from source VM to destination VM
+   * Updates the host IP based on the destination VM ID
+   * @param {number} sourceVmId - Source VM ID
+   * @param {number} destVmId - Destination VM ID
+   * @param {string} ipPattern - IP pattern (e.g., '192.168.1.{}' where {} is replaced with VM ID last digits)
+   */
+  copySSHConfig: async (sourceVmId, destVmId, ipPattern = null) => {
+    const sourceConfig = await ManagedServer.getSSHConfig(sourceVmId);
+    
+    if (!sourceConfig || !sourceConfig.ssh_configured) {
+      console.log(`⚠️  Source VM ${sourceVmId} has no SSH config to copy`);
+      return false;
+    }
+
+    // Determine new IP address
+    let newHost = sourceConfig.ssh_host;
+    
+    if (ipPattern) {
+      // Use provided IP pattern (e.g., '192.168.1.{}')
+      const vmIdStr = destVmId.toString();
+      const lastDigits = vmIdStr.slice(-2).padStart(2, '0');
+      newHost = ipPattern.replace('{}', lastDigits);
+    } else if (sourceConfig.ssh_host) {
+      // Try to auto-detect pattern from source IP
+      const ipMatch = sourceConfig.ssh_host.match(/^(\d+\.\d+\.\d+\.)(\d+)$/);
+      if (ipMatch) {
+        const baseIp = ipMatch[1];
+        const vmIdStr = destVmId.toString();
+        const lastDigits = vmIdStr.slice(-2).padStart(2, '0');
+        newHost = baseIp + lastDigits;
+      }
+    }
+
+    // Copy config to destination
+    await pool.query(
+      `UPDATE managed_servers 
+       SET ssh_host = $1, ssh_port = $2, ssh_username = $3, 
+           ssh_private_key = $4, minecraft_path = $5, minecraft_user = $6, ssh_configured = true 
+       WHERE vmid = $7`,
+      [
+        newHost,
+        sourceConfig.ssh_port,
+        sourceConfig.ssh_username,
+        sourceConfig.ssh_private_key,
+        sourceConfig.minecraft_path,
+        sourceConfig.minecraft_user,
+        destVmId
+      ]
+    );
+
+    console.log(`✅ Copied SSH config from VM ${sourceVmId} to VM ${destVmId} (host: ${newHost})`);
+    return true;
+  },
+
   updateMinecraftVersion: async (vmId, version) => {
     await pool.query(
       'UPDATE managed_servers SET minecraft_version = $1 WHERE vmid = $2',
