@@ -23,15 +23,21 @@ class ProxmoxClient {
   // Authenticate and get token
   async authenticate() {
     try {
+      console.log(`🔐 Authenticating to Proxmox: ${this.username}@${this.realm} at ${this.host}`);
+      
       const response = await this.api.post('/access/ticket', {
         username: `${this.username}@${this.realm}`,
         password: this.password
       });
+      
       this.token = response.data.data.ticket;
       this.userId = response.data.data.userid;
       this.api.defaults.headers.common['Cookie'] = `PVEAuthCookie=${this.token}`;
+      
+      console.log(`✅ Proxmox authentication successful for ${this.userId}`);
       return this.token;
     } catch (error) {
+      console.error(`❌ Proxmox authentication failed:`, error.response?.data || error.message);
       throw new Error(`Proxmox authentication failed: ${error.message}`);
     }
   }
@@ -183,14 +189,23 @@ class ProxmoxClient {
   // Clone a server
   // If newVmId is not provided, Proxmox will auto-assign the next available VM ID
   async cloneServer(sourceVmId, newVmId, newVmName) {
+    console.log(`🔄 cloneServer called: sourceVmId=${sourceVmId}, newVmId=${newVmId}, newVmName=${newVmName}`);
+    console.log(`🔑 Current token state: ${this.token ? 'TOKEN EXISTS' : 'NO TOKEN'}`);
+    
     if (!this.token) {
+      console.log(`🔐 No token found, authenticating...`);
       await this.authenticate();
+    } else {
+      console.log(`✓ Token already exists, skipping auth`);
     }
 
     try {
+      console.log(`📋 Getting source VM details for ${sourceVmId}...`);
       const sourceDetails = await this.getServerDetails(sourceVmId);
       const node = sourceDetails.node;
       const type = sourceDetails.type;
+      
+      console.log(`✓ Source VM is ${type} on node ${node}`);
 
       const cloneData = {
         name: newVmName,
@@ -203,6 +218,7 @@ class ProxmoxClient {
       }
 
       console.log(`🔄 Cloning ${sourceVmId} with data:`, cloneData);
+      console.log(`🌐 POST to: /nodes/${node}/${type}/${sourceVmId}/clone`);
 
       const response = await this.api.post(
         `/nodes/${node}/${type}/${sourceVmId}/clone`,
