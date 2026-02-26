@@ -73,14 +73,14 @@ class ProxmoxClient {
       const response = await this.api.get('/storage');
       const storages = response.data.data || [];
       
-      // Filter for storage that supports disk images and is enabled
+      // Filter for storage that supports disk images  
+      // Note: enabled field may be undefined, so we don't check it
       const filtered = storages.filter(s => 
-        s.enabled && 
         (s.content || '').includes('images')
       );
       
       console.log(`📦 All storage: ${storages.map(s => `${s.storage}(content:${s.content},enabled:${s.enabled})`).join(', ')}`);
-      console.log(`📦 Filtered storage: ${filtered.map(s => `${s.storage}(${s.avail} bytes available)`).join(', ')}`);
+      console.log(`📦 Filtered storage (images only): ${filtered.map(s => `${s.storage}(${s.avail || 0} bytes available)`).join(', ')}`);
       
       return filtered;
     } catch (error) {
@@ -96,12 +96,15 @@ class ProxmoxClient {
 
     try {
       const response = await this.api.get(`/nodes/${nodeName}/storage`);
-      // Filter for storage that supports disk images and is enabled
+      // Filter for storage that supports disk images
+      // Note: enabled field may be undefined, so we don't check it
       const storages = response.data.data || [];
-      return storages.filter(s => 
-        s.enabled && 
+      const filtered = storages.filter(s => 
         (s.content || '').includes('images')
       );
+      
+      console.log(`📦 Node ${nodeName} storage (images only): ${filtered.map(s => `${s.storage}(${s.avail || 0} bytes available)`).join(', ')}`);
+      return filtered;
     } catch (error) {
       throw new Error(`Failed to fetch storage for node ${nodeName}: ${error.message}`);
     }
