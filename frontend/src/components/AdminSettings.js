@@ -219,9 +219,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     }
   };
 
-
-
-  const handleSaveConfiguration = async () => {
+  const saveProxmoxConfig = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -252,28 +250,100 @@ function AdminSettings({ apiBase, token, isAdmin }) {
             password: proxmox.password,
             realm: proxmox.realm
           },
-          node: node,
-          velocity: velocity.host ? {
-            host: velocity.host,
-            port: velocity.port,
-            apiKey: velocity.apiKey,
-            backendNetwork: velocity.backendNetwork
-          } : null,
-          router: router.host && router.username && router.password ? {
-            host: router.host,
-            username: router.username,
-            password: router.password,
-            useHttps: router.useHttps
-          } : null
+          node: node
         })
       });
 
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.error || 'Failed to save configuration');
+        throw new Error(data.error || 'Failed to save Proxmox configuration');
       }
 
-      setSuccess('✓ Configuration saved successfully');
+      setSuccess('✓ Proxmox configuration saved successfully');
+      setTimeout(() => setSuccess(null), 5000);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveVelocityConfig = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+
+      if (!velocity.host || !velocity.port || !velocity.apiKey) {
+        setError('Velocity host, port, and API key are required');
+        setLoading(false);
+        return;
+      }
+
+      const response = await fetch(`${apiBase}/api/admin/config`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          velocity: {
+            host: velocity.host,
+            port: velocity.port,
+            apiKey: velocity.apiKey,
+            backendNetwork: velocity.backendNetwork
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to save Velocity configuration');
+      }
+
+      setSuccess('✓ Velocity configuration saved successfully');
+      setTimeout(() => setSuccess(null), 5000);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveRouterConfig = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+
+      if (!router.host || !router.username || !router.password) {
+        setError('Router host, username, and password are required');
+        setLoading(false);
+        return;
+      }
+
+      const response = await fetch(`${apiBase}/api/admin/config`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          router: {
+            host: router.host,
+            username: router.username,
+            password: router.password,
+            useHttps: router.useHttps
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to save router configuration');
+      }
+
+      setSuccess('✓ Router configuration saved successfully');
       setTimeout(() => setSuccess(null), 5000);
     } catch (err) {
       setError(err.message);
@@ -435,6 +505,14 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                 >
                   {testingProxmox ? 'Testing...' : '🔗 Test Connection'}
                 </button>
+                <button
+                  type="button"
+                  className="btn-test"
+                  onClick={saveProxmoxConfig}
+                  disabled={loading || !proxmox.host || !proxmox.username || !proxmox.password || !node}
+                >
+                  {loading ? 'Saving...' : '💾 Save Proxmox Config'}
+                </button>
               </div>
             </form>
           </div>
@@ -524,8 +602,14 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                   disabled={loading || testingVelocity || !velocity.host || !velocity.apiKey}
                 >
                   {testingVelocity ? 'Testing...' : '🔗 Test Connection'}
-                </button>
-              </div>
+                </button>                <button
+                  type="button"
+                  className="btn-test"
+                  onClick={saveVelocityConfig}
+                  disabled={loading || !velocity.host || !velocity.port || !velocity.apiKey}
+                >
+                  {loading ? 'Saving...' : '💾 Save Velocity Config'}
+                </button>              </div>
             </form>
           </div>
         )}
@@ -615,6 +699,14 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                 >
                   {testingRouter ? 'Testing...' : '🔗 Test Connection'}
                 </button>
+                <button
+                  type="button"
+                  className="btn-test"
+                  onClick={saveRouterConfig}
+                  disabled={loading || !router.host || !router.username || !router.password}
+                >
+                  {loading ? 'Saving...' : '💾 Save Router Config'}
+                </button>
               </div>
             </form>
           </div>
@@ -634,19 +726,6 @@ function AdminSettings({ apiBase, token, isAdmin }) {
           <button onClick={() => setSuccess(null)} className="alert-close">✕</button>
         </div>
       )}
-
-      <div className="settings-footer">
-        <button
-          className="btn btn-primary btn-save"
-          onClick={handleSaveConfiguration}
-          disabled={loading}
-        >
-          {loading ? 'Saving...' : '💾 Save Configuration'}
-        </button>
-        <p className="footer-note">
-          All changes are saved to the database. Test your connection before saving to ensure connectivity.
-        </p>
-      </div>
     </div>
   );
 }
