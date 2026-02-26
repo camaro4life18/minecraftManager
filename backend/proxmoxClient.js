@@ -326,20 +326,22 @@ class ProxmoxClient {
         console.log(`💾 Target storage: ${targetStorage}`);
       }
 
-      // Determine which node to clone to
-      let targetCloneNode = node;
+      // NOTE: Proxmox clone requires the source VM to be available on the target node.
+      // When cloning, we must clone on the SOURCE NODE first, regardless of targetNode.
+      // The VM can be migrated to a different node after cloning if needed.
+      // So we always use the source node for the clone operation.
+      const cloneNode = node;
       if (targetNode && targetNode !== node) {
-        targetCloneNode = targetNode;
-        console.log(`🖥️  Cloning to target node: ${targetNode}`);
+        console.log(`⚠️  Note: Cloning on source node (${node}). To move to ${targetNode}, use migration after clone completes.`);
       }
 
       console.log(`🔄 Cloning ${sourceVmId} with data:`, cloneData);
-      console.log(`🌐 POST to: /nodes/${targetCloneNode}/${type}/${sourceVmId}/clone`);
+      console.log(`🌐 POST to: /nodes/${cloneNode}/${type}/${sourceVmId}/clone`);
       console.log(`🔐 Using CSRF token: ${this.csrfToken ? 'SET' : 'MISSING'}`);
       console.log(`📤 Cookie header:`, this.api.defaults.headers.common['Cookie']);
 
       const response = await this.api.post(
-        `/nodes/${targetCloneNode}/${type}/${sourceVmId}/clone`,
+        `/nodes/${cloneNode}/${type}/${sourceVmId}/clone`,
         cloneData,
         {
           headers: {

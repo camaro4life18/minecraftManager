@@ -232,12 +232,12 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
               onChange={handleInputChange}
               disabled={loading || optionsLoading}
             >
-              <option value="">Auto-select (use source node)</option>
+              <option value="">Auto-select (use source storage node)</option>
               {nodes.map(node => (
                 <option key={node.id} value={node.id}>{node.name}</option>
               ))}
             </select>
-            <small>Select which Proxmox node to clone to. Leave blank to use the same node as source.</small>
+            <small>Clone will be created on the source node. Select this for reference only.</small>
           </div>
 
           <div className="form-group">
