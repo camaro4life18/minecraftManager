@@ -1751,55 +1751,91 @@ async function startServer() {
     // Get available PaperMC versions
     app.get('/api/minecraft/versions', verifyToken, async (req, res) => {
       try {
-        console.log('🔍 Fetching available PaperMC versions from website...');
+        console.log('🔍 Fetching available PaperMC versions...');
 
-        // Scrape the actual downloads page to get real download links
-        const websiteRes = await fetch('https://papermc.io/downloads/paper', { 
-          headers: { 'User-Agent': 'Mozilla/5.0' }
-        });
-        const html = await websiteRes.text();
+        // First get the list of available versions from API
+        const apiResponse = await fetch('https://api.papermc.io/v2/projects/paper');
+        if (!apiResponse.ok) {
+          throw new Error(`API request failed: ${apiResponse.statusText}`);
+        }
+        const apiData = await apiResponse.json();
+        const versions = apiData.versions.slice(-20).reverse(); // Last 20 versions, newest first
         
-        // Extract download URLs from the page
-        // Format: https://fill-data.papermc.io/v1/objects/{hash}/paper-{version}-{build}.jar
-        const downloadRegex = /https:\/\/fill-data\.papermc\.io\/v1\/objects\/[a-f0-9]+\/(paper-[\d.a-z\-]+?-(\d+)\.jar)/g;
-        let match;
-        const builds = {};
-        
-        while ((match = downloadRegex.exec(html)) !== null) {
-          const fullFilename = match[1]; // paper-X.X.X-BUILD.jar
-          const build = parseInt(match[2]); // BUILD number
-          const downloadUrl = match[0]; // Full URL
+        console.log(`✓ Found ${versions.length} versions from API`);
+
+        // Scrape website for download URLs with hashes
+        let websiteDownloadUrls = {};
+        try {
+          const websiteRes = await fetch('https://papermc.io/downloads/paper', { 
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+          });
+          const html = await websiteRes.text();
           
-          // Extract version from filename
-          const versionMatch = fullFilename.match(/paper-([\d.a-z\-]+?)-\d+\.jar/);
-          if (versionMatch) {
-            const version = versionMatch[1];
+          // Extract download URLs from the page
+          // Format: https://fill-data.papermc.io/v1/objects/{hash}/paper-{version}-{build}.jar
+          const downloadRegex = /https:\/\/fill-data\.papermc\.io\/v1\/objects\/[a-f0-9]+\/(paper-[\d.a-z\-]+?-(\d+)\.jar)/g;
+          let match;
+          
+          while ((match = downloadRegex.exec(html)) !== null) {
+            const fullFilename = match[1]; // paper-X.X.X-BUILD.jar
+            const build = parseInt(match[2]); // BUILD number
+            const downloadUrl = match[0]; // Full URL
             
-            // Keep the highest build for each version
-            if (!builds[version] || builds[version].build < build) {
-              builds[version] = { 
-                version, 
-                build, 
-                downloadUrl 
-              };
+            // Extract version from filename
+            const versionMatch = fullFilename.match(/paper-([\d.a-z\-]+?)-\d+\.jar/);
+            if (versionMatch) {
+              const version = versionMatch[1];
+              
+              // Store all builds for each version (in case there are multiple)
+              if (!websiteDownloadUrls[version]) {
+                websiteDownloadUrls[version] = [];
+              }
+              websiteDownloadUrls[version].push({ build, downloadUrl });
             }
           }
+          
+          console.log(`✓ Found download URLs for ${Object.keys(websiteDownloadUrls).length} versions from website`);
+        } catch (e) {
+          console.warn('⚠️  Website scraping failed:', e.message);
         }
-        
-        console.log(`✓ Found ${Object.keys(builds).length} versions with download links from website`);
-        
-        // Convert to array and sort by version (newest first)
-        const versionsWithBuilds = Object.values(builds)
-          .sort((a, b) => {
-            // Simple reverse sort - newer versions typically have higher numbers
-            return b.version.localeCompare(a.version, undefined, { numeric: true });
-          })
-          .slice(0, 20); // Limit to 20 most recent
-        
-        versionsWithBuilds.forEach(v => {
-          console.log(`✓ Version ${v.version}: Build ${v.build} (${v.downloadUrl})`);
-        });
 
+        // For each version, get build info
+        const versionsWithBuilds = [];
+        for (const version of versions) {
+          try {
+            let build = null;
+            let downloadUrl = null;
+            
+            // Check if we have a website download URL for this version
+            if (websiteDownloadUrls[version] && websiteDownloadUrls[version].length > 0) {
+              // Get the highest build from website
+              const maxBuildInfo = websiteDownloadUrls[version].reduce((max, current) => 
+                current.build > max.build ? current : max
+              );
+              build = maxBuildInfo.build;
+              downloadUrl = maxBuildInfo.downloadUrl;
+              console.log(`✓ Version ${version}: Build ${build} (from website with hash)`);
+            } else {
+              // Fallback to API for build number
+              const versionRes = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}`);
+              if (versionRes.ok) {
+                const versionData = await versionRes.json();
+                if (versionData.builds && versionData.builds.length > 0) {
+                  build = versionData.builds[versionData.builds.length - 1];
+                  console.log(`✓ Version ${version}: Build ${build} (from API)`);
+                }
+              }
+            }
+            
+            if (build) {
+              versionsWithBuilds.push({ version, build, downloadUrl });
+            }
+          } catch (e) {
+            console.warn(`⚠️  Error processing version ${version}:`, e.message);
+          }
+        }
+
+        console.log(`✓ Returning ${versionsWithBuilds.length} versions total`);
         res.json({ versions: versionsWithBuilds });
       } catch (error) {
         console.error('❌ Error fetching PaperMC versions:', error);
