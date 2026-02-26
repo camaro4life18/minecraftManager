@@ -1386,15 +1386,26 @@ async function startServer() {
           });
         }
 
+        // Start the newly cloned VM
+        console.log(`🚀 Starting VM ${assignedVmId}...`);
+        try {
+          const startResult = await cloneProxmox.startServer(assignedVmId);
+          console.log(`✅ VM ${assignedVmId} starting with task: ${startResult}`);
+          
+          // Wait for VM to boot
+          console.log(`⏳ Waiting for VM to boot (30 seconds)...`);
+          await new Promise(resolve => setTimeout(resolve, 30000));
+        } catch (startError) {
+          console.warn(`⚠️  Failed to start VM (non-fatal): ${startError.message}`);
+          // Don't fail the entire operation if start fails, but it will affect world setup
+        }
+
         // Set up fresh world with the new seed
         // This will delete old world data and configure server.properties
         let worldSetupResult = null;
         if (sshConfigCopied && assignedVmId) {
           try {
             console.log(`🌍 Configuring fresh world for VM ${assignedVmId} with seed ${serverSeed}...`);
-            
-            // Wait a moment for the VM to be fully cloned and accessible
-            await new Promise(resolve => setTimeout(resolve, 5000));
             
             // Get SSH client and manager
             const sshConfig = await ManagedServer.getSSHConfig(assignedVmId);
