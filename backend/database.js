@@ -178,6 +178,43 @@ export async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_managed_servers_vmid ON managed_servers(vmid)
     `).catch(err => console.warn('Create index idx_managed_servers_vmid:', err.message));
 
+    // Create clone status tracking table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS clone_status (
+        id SERIAL PRIMARY KEY,
+        vmid INTEGER NOT NULL REFERENCES managed_servers(vmid) ON DELETE CASCADE,
+        creator_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        domain_name VARCHAR(255) NOT NULL,
+        source_vmid INTEGER NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        current_step VARCHAR(100),
+        vm_cloned BOOLEAN DEFAULT false,
+        ssh_configured BOOLEAN DEFAULT false,
+        world_setup BOOLEAN DEFAULT false,
+        dhcp_reserved BOOLEAN DEFAULT false,
+        velocity_added BOOLEAN DEFAULT false,
+        ip_address VARCHAR(255),
+        mac_address VARCHAR(255),
+        error_message TEXT,
+        error_step VARCHAR(100),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMP
+      )
+    `).catch(err => console.warn('Create clone_status table:', err.message));
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_clone_status_vmid ON clone_status(vmid)
+    `).catch(err => console.warn('Create index idx_clone_status_vmid:', err.message));
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_clone_status_creator_id ON clone_status(creator_id)
+    `).catch(err => console.warn('Create index idx_clone_status_creator_id:', err.message));
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_clone_status_status ON clone_status(status)
+    `).catch(err => console.warn('Create index idx_clone_status_status:', err.message));
+
     // Create app configuration table
     await client.query(`
       CREATE TABLE IF NOT EXISTS app_config (

@@ -23,6 +23,7 @@ import {
   ApiMetric,
   pool
 } from './database.js';
+import CloneStatus from './cloneStatus.js';
 import { 
   generateToken, 
   verifyToken, 
@@ -1305,6 +1306,10 @@ async function startServer() {
         // Log the action and track as managed server with seed
         await ServerCloneLog.create(req.user.userId, sourceVmId, assignedVmId, newVmName, 'pending');
         await ManagedServer.create(assignedVmId, req.user.userId, newVmName, serverSeed);
+        
+        // Create clone status tracker
+        const cloneStatus = await CloneStatus.create(assignedVmId, req.user.userId, domainName, sourceVmId);
+        await CloneStatus.updateStep(assignedVmId, 'vm_cloned');
 
         // Copy SSH configuration from source to destination
         // This allows us to immediately configure the world without manual SSH setup
@@ -1318,9 +1323,14 @@ async function startServer() {
         // Create DHCP reservation in ASUS router (required)
         let dhcpReservationResult = null;
         try {
+          await CloneStatus.updateStep(assignedVmId, 'dhcp_reservation');
+          
           if (!assignedVmId) {
+            await CloneStatus.markPaused(assignedVmId, 'Could not determine assigned VM ID', 'dhcp_reservation');
             return res.status(500).json({
-              error: 'Could not determine assigned VM ID for DHCP reservation.'
+              error: 'Could not determine assigned VM ID for DHCP reservation.',
+              vmid: assignedVmId,
+              canRetry: true
             });
           }
 
@@ -1367,22 +1377,31 @@ async function startServer() {
 
             if (dhcpReservationResult.success) {
               console.log(`✅ DHCP reservation created: ${macAddress} → ${targetIp}`);
+              await CloneStatus.completeStep(assignedVmId, 'dhcp_reserved', { ipAddress: targetIp, macAddress });
             } else {
+              await CloneStatus.markPaused(assignedVmId, 'Failed to create DHCP reservation', 'dhcp_reservation');
               return res.status(500).json({
-                error: 'Failed to create DHCP reservation on router.'
+                error: 'Failed to create DHCP reservation on router.',
+                vmid: assignedVmId,
+                canRetry: true
               });
             }
           } else {
+            await CloneStatus.markPaused(assignedVmId, `Could not get MAC address after ${maxRetries} attempts`, 'dhcp_reservation');
             return res.status(500).json({
               error: `Could not get MAC address for VM ${assignedVmId} after ${maxRetries} attempts (${maxRetries * 3} seconds). The network config may be delayed.`,
               vmId: assignedVmId,
-              retryable: true
+              vmid: assignedVmId,
+              canRetry: true
             });
           }
         } catch (routerError) {
           console.error(`⚠️  Failed to create DHCP reservation:`, routerError.message);
+          await CloneStatus.markPaused(assignedVmId, routerError.message, 'dhcp_reservation');
           return res.status(500).json({
-            error: `Failed to create DHCP reservation: ${routerError.message}`
+            error: `Failed to create DHCP reservation: ${routerError.message}`,
+            vmid: assignedVmId,
+            canRetry: true
           });
         }
 
@@ -1463,6 +1482,9 @@ async function startServer() {
           }
         }
 
+        // Mark clone as completed
+        await CloneStatus.markComplete(assignedVmId);
+
         res.json({ 
           success: true, 
           taskId: result, 
@@ -1478,10 +1500,149 @@ async function startServer() {
       } catch (error) {
         console.error(`❌ Clone failed:`, error);
         console.error(`Error details:`, error.response?.data || error.message);
+        
+        // Try to mark the clone as failed (if we have a VM ID context)
+        try {
+          const vmidFromError = error.vmid || error.assignedVmId;
+          if (vmidFromError) {
+            await CloneStatus.markFailed(vmidFromError, error.message, 'unknown_step');
+          }
+        } catch (statusUpdateError) {
+          console.warn('Could not update clone status:', statusUpdateError.message);
+        }
+        
         res.status(500).json({ 
           error: error.message,
           details: error.response?.data?.errors || error.response?.statusText || 'See server logs for details'
         });
+      }
+    });
+
+    // Get clone status (protected)
+    app.get('/api/servers/:vmid/clone-status', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const status = await CloneStatus.getByVmId(vmid);
+        
+        if (!status) {
+          return res.status(404).json({ error: 'Clone status not found for VM' });
+        }
+
+        // Check permissions - user can only see their own, admin sees all
+        if (req.user.role !== 'admin' && status.creator_id !== req.user.userId) {
+          return res.status(403).json({ error: 'Permission denied' });
+        }
+
+        res.json(status);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Resume a paused clone (protected)
+    app.post('/api/servers/:vmid/clone-resume', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const cloneStatus = await CloneStatus.getByVmId(vmid);
+        
+        if (!cloneStatus) {
+          return res.status(404).json({ error: 'Clone status not found' });
+        }
+
+        // Check permissions
+        if (req.user.role !== 'admin' && cloneStatus.creator_id !== req.user.userId) {
+          return res.status(403).json({ error: 'Permission denied' });
+        }
+
+        if (cloneStatus.status !== 'paused' && cloneStatus.status !== 'failed') {
+          return res.status(400).json({ 
+            error: `Clone is ${cloneStatus.status}, cannot resume. Only paused or failed clones can be resumed.` 
+          });
+        }
+
+        // Get the managed server info
+        const server = await ManagedServer.getServer(vmid);
+        if (!server) {
+          return res.status(404).json({ error: 'Server record not found' });
+        }
+
+        // Determine what step to retry based on what failed
+        console.log(`🔄 Resuming clone for VM ${vmid}, current step was: ${cloneStatus.error_step}`);
+
+        // Retry the failed step
+        const failedStep = cloneStatus.error_step;
+        let result = { success: false };
+
+        try {
+          if (failedStep === 'dhcp_reservation' || !cloneStatus.dhcp_reserved) {
+            // Load config
+            const proxmoxHost = await AppConfig.get('proxmox_host');
+            const proxmoxUsername = await AppConfig.get('proxmox_username');
+            const proxmoxPassword = await AppConfig.get('proxmox_password');
+            const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
+            const routerHost = await AppConfig.get('router_host');
+            const routerUsername = await AppConfig.get('router_username');
+            const routerPassword = await AppConfig.get('router_password');
+            const routerUseHttps = (await AppConfig.get('router_use_https')) !== 'false';
+
+            if (!routerHost) {
+              return res.status(400).json({ error: 'Router not configured for DHCP retry' });
+            }
+
+            const currentProxmox = new ProxmoxClient({
+              host: proxmoxHost,
+              username: proxmoxUsername,
+              password: proxmoxPassword,
+              realm: proxmoxRealm
+            });
+
+            // Get MAC address and create reservation
+            try {
+              const networkConfig = await currentProxmox.getVMNetworkConfig(vmid);
+              if (networkConfig.primaryMac) {
+                const macAddress = networkConfig.primaryMac;
+                const targetIp = cloneStatus.ip_address;
+
+                console.log(`🔄 Retrying DHCP reservation: ${macAddress} → ${targetIp}`);
+
+                result = await routerServicePost('/dhcp-reservation', {
+                  host: routerHost,
+                  username: routerUsername,
+                  password: routerPassword,
+                  useHttps: routerUseHttps,
+                  mac: macAddress,
+                  ip: targetIp,
+                  name: cloneStatus.domain_name
+                });
+
+                if (result.success) {
+                  await CloneStatus.completeStep(vmid, 'dhcp_reserved', { ipAddress: targetIp, macAddress });
+                  console.log(`✅ DHCP reservation retry successful`);
+                } else {
+                  throw new Error('DHCP reservation failed');
+                }
+              } else {
+                throw new Error('Could not get MAC address');
+              }
+            } catch (retryError) {
+              return res.status(500).json({ 
+                error: `Failed to retry DHCP reservation: ${retryError.message}` 
+              });
+            }
+          }
+
+          // Mark as resumed/completed if retry was successful
+          await CloneStatus.resume(vmid);
+          res.json({ 
+            success: true, 
+            message: `Clone resumed for VM ${vmid}`,
+            status: 'resumed' 
+          });
+        } catch (resumeError) {
+          return res.status(500).json({ error: resumeError.message });
+        }
+      } catch (error) {
+        res.status(500).json({ error: error.message });
       }
     });
 
