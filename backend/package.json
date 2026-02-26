@@ -11,7 +11,9 @@
     "init-db": "node init-db.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
-    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "syntax-check": "node --check server.js && node --check sshClient.js && node --check database.js && node --check auth.js && node --check middleware.js && node --check swagger.js && echo \"✓ All files syntax check passed\"",
+    "pretest": "npm run syntax-check"
   },
   "dependencies": {
     "axios": "^1.6.5",
