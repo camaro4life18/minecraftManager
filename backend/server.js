@@ -1187,7 +1187,7 @@ async function startServer() {
           console.log(`🌐 Creating DHCP reservation for VM ${assignedVmId}...`);
 
           // Get VM's MAC address from Proxmox
-          const networkConfig = await proxmox.getVMNetworkConfig(assignedVmId);
+          const networkConfig = await cloneProxmox.getVMNetworkConfig(assignedVmId);
           
           if (networkConfig.primaryMac) {
             const macAddress = networkConfig.primaryMac;
