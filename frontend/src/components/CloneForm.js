@@ -19,7 +19,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
     }));
   };
 
-  // Auto-generate domain name based on VM ID
+  // Auto-generate domain name based on VM ID or use a default pattern
   const handleVmIdChange = (e) => {
     const vmId = e.target.value;
     const numericPart = vmId.replace(/\D/g, ''); // Extract numbers
@@ -27,7 +27,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
     setFormData(prev => ({
       ...prev,
       newVmId: vmId,
-      domainName: numericPart ? `minecraft${numericPart.slice(-2).padStart(2, '0')}.zanarkand.site` : ''
+      domainName: numericPart ? `minecraft${numericPart.slice(-2).padStart(2, '0')}.zanarkand.site` : prev.domainName
     }));
   };
 
@@ -41,11 +41,6 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!formData.newVmId) {
-      setError('VM ID is required');
-      return;
-    }
-
     if (!formData.domainName) {
       setError('Domain name is required');
       return;
@@ -63,19 +58,24 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
 
       const seed = formData.seedOption === 'random' ? 'random' : formData.customSeed.trim();
 
+      const payload = {
+        sourceVmId: sourceServer.vmid,
+        domainName: formData.domainName,
+        seed: seed
+      };
+
+      // Only include newVmId if user specified one, otherwise Proxmox will auto-assign
+      if (formData.newVmId) {
+        payload.newVmId = parseInt(formData.newVmId);
+      }
+
       const response = await fetch(`${apiBase}/api/servers/clone`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          sourceVmId: sourceServer.vmid,
-          newVmId: parseInt(formData.newVmId),
-          newVmName: formData.domainName,
-          domainName: formData.domainName,
-          seed: seed
-        })
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) {
@@ -102,18 +102,17 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label htmlFor="newVmId">New VM ID:</label>
+            <label htmlFor="newVmId">New VM ID (optional):</label>
             <input
               type="number"
               id="newVmId"
               name="newVmId"
               value={formData.newVmId}
               onChange={handleVmIdChange}
-              placeholder="e.g., 102"
+              placeholder="Leave blank for auto-assignment"
               disabled={loading}
-              required
             />
-            <small>Must be a unique ID not already in use</small>
+            <small>Leave blank to let Proxmox assign the next available ID automatically</small>
           </div>
 
           <div className="form-group">
