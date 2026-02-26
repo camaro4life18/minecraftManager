@@ -1052,6 +1052,57 @@ async function startServer() {
           });
         }
 
+        // Enforce clone limit per user
+        const maxClonesPerUser = 5;
+        const existingServers = await ManagedServer.getByCreator(req.user.userId);
+        if (existingServers.length >= maxClonesPerUser) {
+          return res.status(400).json({
+            error: `Clone limit reached. Max ${maxClonesPerUser} managed servers per user.`
+          });
+        }
+
+        const localIp = process.env.VELOCITY_BACKEND_NETWORK || '192.168.1';
+
+        // Router config is required for IP reservation
+        const routerHost = await AppConfig.get('router_host');
+        const routerUsername = await AppConfig.get('router_username');
+        const routerPassword = await AppConfig.get('router_password');
+        const routerUseHttps = (await AppConfig.get('router_use_https')) !== 'false';
+
+        if (!routerHost || !routerUsername || !routerPassword) {
+          return res.status(400).json({
+            error: 'Router not configured. Configure ASUS router before cloning.'
+          });
+        }
+
+        // Pick an available IP from 192.168.1.225-230 (or configured network prefix)
+        const router = new AsusRouterClient({
+          host: routerHost,
+          username: routerUsername,
+          password: routerPassword,
+          useHttps: routerUseHttps
+        });
+
+        const reservations = await router.getDHCPReservations();
+        const usedIps = new Set(reservations.map(r => r.ip));
+        const ipRangeStart = 225;
+        const ipRangeEnd = 230;
+
+        let targetIp = null;
+        for (let i = ipRangeStart; i <= ipRangeEnd; i += 1) {
+          const candidate = `${localIp}.${i}`;
+          if (!usedIps.has(candidate)) {
+            targetIp = candidate;
+            break;
+          }
+        }
+
+        if (!targetIp) {
+          return res.status(400).json({
+            error: `No available IPs in ${localIp}.${ipRangeStart}-${ipRangeEnd}.`
+          });
+        }
+
         // Generate random seed if not provided or if explicitly requested
         let serverSeed = seed;
         if (!seed || seed === 'random') {
@@ -1076,62 +1127,56 @@ async function startServer() {
 
         // Copy SSH configuration from source to destination
         // This allows us to immediately configure the world without manual SSH setup
-        const localIp = process.env.VELOCITY_BACKEND_NETWORK || '192.168.1';
-        const ipPattern = `${localIp}.{}`;
-        const sshConfigCopied = await ManagedServer.copySSHConfig(sourceVmId, assignedVmId, ipPattern);
+        const sshConfigCopied = await ManagedServer.copySSHConfig(
+          sourceVmId,
+          assignedVmId,
+          null,
+          targetIp
+        );
 
-        // Create DHCP reservation in ASUS router (if configured)
+        // Create DHCP reservation in ASUS router (required)
         let dhcpReservationResult = null;
         try {
-          const routerHost = await AppConfig.get('router_host');
-          const routerUsername = await AppConfig.get('router_username');
-          const routerPassword = await AppConfig.get('router_password');
-          const routerUseHttps = (await AppConfig.get('router_use_https')) !== 'false';
+          if (!assignedVmId) {
+            return res.status(500).json({
+              error: 'Could not determine assigned VM ID for DHCP reservation.'
+            });
+          }
 
-          if (routerHost && routerUsername && routerPassword && assignedVmId) {
-            console.log(`🌐 Creating DHCP reservation for VM ${assignedVmId}...`);
+          console.log(`🌐 Creating DHCP reservation for VM ${assignedVmId}...`);
 
-            // Get VM's MAC address from Proxmox
-            const networkConfig = await proxmox.getVMNetworkConfig(assignedVmId);
-            
-            if (networkConfig.primaryMac) {
-              const macAddress = networkConfig.primaryMac;
-              
-              // Calculate IP address based on VM ID
-              // VM 102 -> 192.168.1.102, VM 107 -> 192.168.1.107
-              const vmIdStr = assignedVmId.toString();
-              const lastDigits = vmIdStr.slice(-2).padStart(2, '0');
-              const targetIp = `${localIp}.${lastDigits}`;
+          // Get VM's MAC address from Proxmox
+          const networkConfig = await proxmox.getVMNetworkConfig(assignedVmId);
+          
+          if (networkConfig.primaryMac) {
+            const macAddress = networkConfig.primaryMac;
 
-              console.log(`   MAC: ${macAddress}`);
-              console.log(`   Target IP: ${targetIp}`);
+            console.log(`   MAC: ${macAddress}`);
+            console.log(`   Target IP: ${targetIp}`);
 
-              // Create router client and add reservation
-              const router = new AsusRouterClient({
-                host: routerHost,
-                username: routerUsername,
-                password: routerPassword,
-                useHttps: routerUseHttps
-              });
+            dhcpReservationResult = await router.addDHCPReservation(
+              macAddress,
+              targetIp,
+              domainName
+            );
 
-              dhcpReservationResult = await router.addDHCPReservation(
-                macAddress,
-                targetIp,
-                domainName
-              );
-
-              if (dhcpReservationResult.success) {
-                console.log(`✅ DHCP reservation created: ${macAddress} → ${targetIp}`);
-              }
+            if (dhcpReservationResult.success) {
+              console.log(`✅ DHCP reservation created: ${macAddress} → ${targetIp}`);
             } else {
-              console.warn(`⚠️  Could not get MAC address for VM ${assignedVmId}`);
+              return res.status(500).json({
+                error: 'Failed to create DHCP reservation on router.'
+              });
             }
           } else {
-            console.log(`ℹ️  Router not configured, skipping DHCP reservation`);
+            return res.status(500).json({
+              error: `Could not get MAC address for VM ${assignedVmId}.`
+            });
           }
         } catch (routerError) {
-          console.error(`⚠️  Failed to create DHCP reservation (non-fatal):`, routerError.message);
-          // Don't fail the entire clone operation if router config fails
+          console.error(`⚠️  Failed to create DHCP reservation:`, routerError.message);
+          return res.status(500).json({
+            error: `Failed to create DHCP reservation: ${routerError.message}`
+          });
         }
 
         // Set up fresh world with the new seed
@@ -1183,11 +1228,7 @@ async function startServer() {
         // You may need to adjust the IP or add additional configuration
         let velocityResult = null;
         if (velocity.isConfigured() && assignedVmId) {
-          // Calculate IP address based on VM ID (same logic as DHCP reservation)
-          // VM 102 -> 192.168.1.02 (last 2 digits), VM 7 -> 192.168.1.07
-          const vmIdStr = assignedVmId.toString();
-          const lastDigits = vmIdStr.slice(-2).padStart(2, '0');
-          const serverIp = `${localIp}.${lastDigits}`;
+          const serverIp = targetIp;
           
           console.log(`🎮 Adding to Velocity: ${domainName} → ${serverIp}:25565`);
           

@@ -476,12 +476,13 @@ export const ManagedServer = {
 
   /**
    * Copy SSH config from source VM to destination VM
-   * Updates the host IP based on the destination VM ID
+   * Updates the host IP based on a provided host or destination VM ID
    * @param {number} sourceVmId - Source VM ID
    * @param {number} destVmId - Destination VM ID
    * @param {string} ipPattern - IP pattern (e.g., '192.168.1.{}' where {} is replaced with VM ID last digits)
+   * @param {string} explicitHost - Explicit IP/host to use for destination
    */
-  copySSHConfig: async (sourceVmId, destVmId, ipPattern = null) => {
+  copySSHConfig: async (sourceVmId, destVmId, ipPattern = null, explicitHost = null) => {
     const sourceConfig = await ManagedServer.getSSHConfig(sourceVmId);
     
     if (!sourceConfig || !sourceConfig.ssh_configured) {
@@ -492,7 +493,9 @@ export const ManagedServer = {
     // Determine new IP address
     let newHost = sourceConfig.ssh_host;
     
-    if (ipPattern) {
+    if (explicitHost) {
+      newHost = explicitHost;
+    } else if (ipPattern) {
       // Use provided IP pattern (e.g., '192.168.1.{}')
       const vmIdStr = destVmId.toString();
       const lastDigits = vmIdStr.slice(-2).padStart(2, '0');
