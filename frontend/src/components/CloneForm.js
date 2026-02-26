@@ -15,6 +15,8 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
   const [nodes, setNodes] = useState([]);
   const [storage, setStorage] = useState([]);
   const [optionsLoading, setOptionsLoading] = useState(true);
+  const [consoleLogs, setConsoleLogs] = useState([]);
+  const [showConsole, setShowConsole] = useState(false);
 
   // Fetch available nodes and storage when component mounts
   useEffect(() => {
@@ -95,6 +97,8 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
     try {
       setLoading(true);
       setError(null);
+      setConsoleLogs(['🚀 Starting clone operation...']);
+      setShowConsole(true);
 
       const seed = formData.seedOption === 'random' ? 'random' : formData.customSeed.trim();
 
@@ -117,6 +121,17 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
         payload.targetStorage = formData.targetStorage;
       }
 
+      // Add log entry
+      const addLog = (msg) => {
+        setConsoleLogs(prev => [...prev, msg]);
+      };
+
+      addLog(`📋 Source VM: ${sourceServer.vmid}`);
+      addLog(`📝 Domain: ${formData.domainName}`);
+      if (formData.targetNode) addLog(`🖥️ Target Node: ${formData.targetNode}`);
+      if (formData.targetStorage) addLog(`💾 Target Storage: ${formData.targetStorage}`);
+      addLog('⏳ Sending clone request...');
+
       const response = await fetch(`${apiBase}/api/servers/clone`, {
         method: 'POST',
         headers: {
@@ -128,15 +143,26 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
 
       if (!response.ok) {
         const data = await response.json();
+        addLog(`❌ Error: ${data.error || 'Clone failed'}`);
         throw new Error(data.error || 'Clone failed');
       }
 
       const result = await response.json();
       const seedDisplay = result.seed || seed;
-      alert(`Server cloning started!\n\nDomain: ${result.domainName}\nSeed: ${seedDisplay}\n\nThis may take a few minutes. Once complete, it will be added to the velocity server list.`);
-      onSuccess();
+      addLog(`✅ Clone successful!`);
+      addLog(`🆔 VM ID: ${result.vmid || result.newVmId}`);
+      addLog(`🌱 Seed: ${seedDisplay}`);
+      addLog(`📍 Server is being set up...`);
+      addLog('');
+      addLog('✨ Clone completed! Server will be ready shortly.');
+      
+      setTimeout(() => {
+        alert(`Server cloning started!\n\nDomain: ${result.domainName}\nSeed: ${seedDisplay}\n\nThis may take a few minutes. Once complete, it will be added to the velocity server list.`);
+        onSuccess();
+      }, 1000);
     } catch (err) {
       setError(err.message);
+      setConsoleLogs(prev => [...prev, `❌ Error: ${err.message}`]);
     } finally {
       setLoading(false);
     }
@@ -250,11 +276,14 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
               disabled={loading || optionsLoading}
             >
               <option value="">Auto-select (use source storage)</option>
-              {storage.map(stor => (
-                <option key={stor.id} value={stor.id}>
-                  {stor.name} ({stor.type}) - {Math.round(stor.available / (1024 * 1024 * 1024))} GB available
-                </option>
-              ))}
+              {storage.map(stor => {
+                const availableGB = stor.available ? Math.round(stor.available / (1024 * 1024 * 1024)) : 0;
+                return (
+                  <option key={stor.id} value={stor.id}>
+                    {stor.name} ({stor.type}) - {availableGB} GB available
+                  </option>
+                );
+              })}
             </select>
             <small>Select which storage to clone to. Useful if source storage is full. Leave blank to use the same storage as source.</small>
           </div>
@@ -287,6 +316,35 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
                 This may take several minutes while the VM is created and configured.<br/>
                 Please do not close this window or refresh the page.
               </p>
+              
+              <div style={{marginTop: '1rem'}}>
+                <button 
+                  type="button"
+                  onClick={() => setShowConsole(!showConsole)}
+                  style={{
+                    background: 'rgba(52, 168, 224, 0.2)',
+                    border: '1px solid rgba(52, 168, 224, 0.3)',
+                    color: '#34a8e0',
+                    padding: '0.5rem 1rem',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '0.85em',
+                    marginBottom: showConsole ? '0.5rem' : 0
+                  }}
+                >
+                  {showConsole ? '▼ Hide' : '▶ Show'} Clone Details
+                </button>
+                
+                {showConsole && (
+                  <div className="clone-console">
+                    {consoleLogs.map((log, idx) => (
+                      <div key={idx} className="console-line">
+                        {log}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </form>
