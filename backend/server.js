@@ -1208,6 +1208,61 @@ async function startServer() {
         if (!assignedVmId) {
           console.warn('⚠️  Could not determine assigned VM ID from clone result:', result);
         }
+
+        // Wait for clone task to complete using the UPID
+        if (result.upid) {
+          console.log(`⏳ Waiting for clone task to complete (UPID: ${result.upid})...`);
+          try {
+            function extractNodeFromUpid(upid) {
+              // UPID format: UPID:node:pid:starttime:type:ID:user
+              const parts = upid.split(':');
+              return parts[1] || 'proxmox1'; // Default to first node if parsing fails
+            }
+
+            function extractTaskIdFromUpid(upid) {
+              // Extract taskid which is typically part of the UPID
+              const parts = upid.split(':');
+              return parts[4] + ':' + parts[5] || upid; // Return type:ID
+            }
+
+            const node = extractNodeFromUpid(result.upid);
+            let cloneTaskComplete = false;
+            let waitAttempts = 0;
+            const maxWaitAttempts = 120; // 2 minutes max of 1-second checks
+
+            while (!cloneTaskComplete && waitAttempts < maxWaitAttempts) {
+              try {
+                // Query task status from Proxmox
+                const taskResponse = await cloneProxmox.api.get(`/nodes/${node}/tasks/${result.upid}`);
+                const taskStatus = taskResponse.data.data;
+
+                if (taskStatus.status === 'stopped') {
+                  if (taskStatus.exitstatus === 'OK') {
+                    console.log(`✅ Clone task completed successfully!`);
+                    cloneTaskComplete = true;
+                  } else {
+                    console.warn(`⚠️  Clone task ended with status: ${taskStatus.exitstatus}`);
+                    cloneTaskComplete = true;
+                  }
+                } else {
+                  console.log(`⏳ Clone in progress... (attempt ${waitAttempts + 1}/${maxWaitAttempts})`);
+                  await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+                }
+              } catch (taskError) {
+                // If we can't query the task, assume it's still running
+                console.log(`⏳ Checking clone status... (attempt ${waitAttempts + 1}/${maxWaitAttempts})`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
+              waitAttempts++;
+            }
+
+            if (!cloneTaskComplete) {
+              console.warn(`⚠️  Clone task did not complete within ${maxWaitAttempts} seconds, proceeding with MAC lookup...`);
+            }
+          } catch (waitError) {
+            console.warn(`⚠️  Could not wait for clone task, proceeding anyway: ${waitError.message}`);
+          }
+        }
         
         // If targetNode was specified, migrate the cloned VM to that node
         if (targetNode) {
@@ -1258,10 +1313,10 @@ async function startServer() {
 
           console.log(`🌐 Creating DHCP reservation for VM ${assignedVmId}...`);
 
-          // Get VM's MAC address from Proxmox with retry (VM might still be initializing)
+          // Get VM's MAC address from Proxmox with retry (VM network config may take a few seconds)
           let networkConfig = null;
           let retryCount = 0;
-          const maxRetries = 15;
+          const maxRetries = 10; // 10 attempts × 3 seconds = 30 seconds (clone is already complete)
           
           while (retryCount < maxRetries) {
             try {
@@ -1275,7 +1330,7 @@ async function startServer() {
             
             retryCount++;
             if (retryCount < maxRetries) {
-              // Wait 3 seconds before retry (longer wait for VM initialization)
+              // Wait 3 seconds before retry
               console.log(`⏳ Waiting 3 seconds before retry (${retryCount}/${maxRetries})...`);
               await new Promise(resolve => setTimeout(resolve, 3000));
             }
@@ -1306,7 +1361,9 @@ async function startServer() {
             }
           } else {
             return res.status(500).json({
-              error: `Could not get MAC address for VM ${assignedVmId} after ${maxRetries} attempts (${maxRetries * 3} seconds). The VM may still be initializing. Please try again in a few moments.`
+              error: `Could not get MAC address for VM ${assignedVmId} after ${maxRetries} attempts (${maxRetries * 3} seconds). The network config may be delayed.`,
+              vmId: assignedVmId,
+              retryable: true
             });
           }
         } catch (routerError) {
@@ -1427,6 +1484,124 @@ async function startServer() {
 
         const result = await proxmox.stopServer(req.params.vmid);
         res.json({ success: true, taskId: result });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Retry MAC address lookup for an already-cloned VM
+    app.post('/api/servers/:vmid/retry-mac-lookup', verifyToken, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const { targetIp } = req.body;
+
+        if (!targetIp) {
+          return res.status(400).json({
+            error: 'targetIp is required'
+          });
+        }
+
+        // Load Proxmox config for MAC lookup
+        const proxmoxHost = await AppConfig.get('proxmox_host');
+        const proxmoxUsername = await AppConfig.get('proxmox_username');
+        const proxmoxPassword = await AppConfig.get('proxmox_password');
+        const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
+
+        if (!proxmoxHost || !proxmoxUsername || !proxmoxPassword) {
+          return res.status(400).json({
+            error: 'Proxmox not configured'
+          });
+        }
+
+        const retryProxmox = new ProxmoxClient({
+          host: proxmoxHost,
+          username: proxmoxUsername,
+          password: proxmoxPassword,
+          realm: proxmoxRealm
+        });
+
+        console.log(`🔄 Retrying MAC lookup for VM ${vmid}...`);
+
+        // Try to get MAC with retry
+        let networkConfig = null;
+        let retryCount = 0;
+        const maxRetries = 10; // 10 attempts × 3 seconds = 30 seconds max wait
+
+        while (retryCount < maxRetries) {
+          try {
+            networkConfig = await retryProxmox.getVMNetworkConfig(vmid);
+            if (networkConfig.primaryMac) {
+              break; // MAC found, exit retry loop
+            }
+          } catch (err) {
+            console.warn(`⚠️  Attempt ${retryCount + 1}: Could not get MAC, retrying...`);
+          }
+
+          retryCount++;
+          if (retryCount < maxRetries) {
+            console.log(`⏳ Waiting 3 seconds before retry (${retryCount}/${maxRetries})...`);
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          }
+        }
+
+        if (networkConfig?.primaryMac) {
+          const macAddress = networkConfig.primaryMac;
+
+          // Load router config for DHCP
+          const routerHost = await AppConfig.get('router_host');
+          const routerUsername = await AppConfig.get('router_username');
+          const routerPassword = await AppConfig.get('router_password');
+          const routerUseHttps = (await AppConfig.get('router_use_https')) === 'true';
+
+          if (routerHost && routerUsername && routerPassword) {
+            // Get domain name from database
+            const serverInfo = await ManagedServer.get(vmid);
+            const domainName = serverInfo?.name || `server-${vmid}`;
+
+            console.log(`🌐 Retrying DHCP reservation...`);
+            console.log(`   MAC: ${macAddress}`);
+            console.log(`   Target IP: ${targetIp}`);
+
+            const dhcpResult = await routerServicePost('/dhcp-reservation', {
+              host: routerHost,
+              username: routerUsername,
+              password: routerPassword,
+              useHttps: routerUseHttps,
+              mac: macAddress,
+              ip: targetIp,
+              name: domainName
+            });
+
+            if (dhcpResult.success) {
+              console.log(`✅ DHCP reservation created: ${macAddress} → ${targetIp}`);
+              return res.json({
+                success: true,
+                macAddress: macAddress,
+                ip: targetIp,
+                message: 'MAC address retrieved and DHCP reservation created successfully'
+              });
+            } else {
+              return res.status(500).json({
+                error: 'Failed to create DHCP reservation on router',
+                macAddress: macAddress
+              });
+            }
+          } else {
+            // Router not configured, but we got the MAC
+            return res.json({
+              success: true,
+              macAddress: macAddress,
+              ip: targetIp,
+              message: 'MAC address retrieved (DHCP reservation skipped - router not configured)'
+            });
+          }
+        } else {
+          return res.status(500).json({
+            error: `Could not get MAC address for VM ${vmid} after ${maxRetries} attempts (${maxRetries * 3} seconds). The VM may still be initializing.`,
+            vmId: vmid,
+            retryable: true
+          });
+        }
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
