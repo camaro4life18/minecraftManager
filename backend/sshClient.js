@@ -399,6 +399,7 @@ export class MinecraftServerManager {
 
   /**
    * Execute a systemctl command using sudo
+   * Note: Requires passwordless sudo for systemctl commands
    * @private
    */
   async runSystemctl(action) {
@@ -413,6 +414,17 @@ export class MinecraftServerManager {
   async getStatus() {
     try {
       const result = await this.runSystemctl('status');
+      
+      // Check if sudo failed
+      if (result.stderr && result.stderr.includes('password is required')) {
+        console.warn('⚠️  Sudo requires password. Please configure passwordless sudo for systemctl.');
+        return {
+          running: false,
+          enabled: false,
+          error: 'Passwordless sudo not configured. Run: echo "$(whoami) ALL=(ALL) NOPASSWD: /bin/systemctl * minecraft.service" | sudo tee /etc/sudoers.d/minecraft-manager'
+        };
+      }
+      
       const isRunning = result.stdout.includes('active (running)');
       const isEnabled = result.stdout.includes('enabled');
       
@@ -422,22 +434,12 @@ export class MinecraftServerManager {
         output: result.stdout
       };
     } catch (error) {
-      // Try alternative check if systemd service doesn't work or sudo fails
-      try {
-        // Look for java process running server.jar in the minecraft path
-        const result = await this.ssh.executeCommand(`pgrep -f "java.*${this.minecraftPath}.*server.jar"`);
-        return {
-          running: result.code === 0,
-          enabled: false,
-          output: result.stdout || 'Process check: ' + (result.code === 0 ? 'running' : 'not running')
-        };
-      } catch (e) {
-        return {
-          running: false,
-          enabled: false,
-          error: error.message
-        };
-      }
+      console.error('❌ Error checking status:', error.message);
+      return {
+        running: false,
+        enabled: false,
+        error: error.message
+      };
     }
   }
 
