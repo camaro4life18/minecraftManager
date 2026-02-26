@@ -127,6 +127,7 @@ class ProxmoxClient {
   }
 
   // Clone a server
+  // If newVmId is not provided, Proxmox will auto-assign the next available VM ID
   async cloneServer(sourceVmId, newVmId, newVmName) {
     if (!this.token) {
       await this.authenticate();
@@ -138,17 +139,47 @@ class ProxmoxClient {
       const type = sourceDetails.type;
 
       const cloneData = {
-        vmid: newVmId,
         name: newVmName,
         full: 1 // Full clone (not linked clone)
       };
+
+      // Only include vmid if explicitly provided, otherwise Proxmox auto-assigns
+      if (newVmId) {
+        cloneData.vmid = newVmId;
+      }
+
+      console.log(`🔄 Cloning ${sourceVmId} with data:`, cloneData);
 
       const response = await this.api.post(
         `/nodes/${node}/${type}/${sourceVmId}/clone`,
         cloneData
       );
 
-      return response.data.data;
+      const result = response.data.data;
+      console.log(`✓ Clone response:`, result);
+
+      // If vmid wasn't specified, try to determine it from the next available ID
+      // Note: Proxmox clone returns a task UPID, not the new vmid directly
+      // We'll need to wait for the task to complete and query it, or get next vmid
+      if (!newVmId) {
+        // Get list of all VMs to find the newly created one
+        // This is a workaround since Proxmox doesn't return the new vmid in clone response
+        try {
+          await this.waitForTask(result, node);
+          const servers = await this.getServers();
+          const newServer = servers.find(s => s.name === newVmName);
+          if (newServer) {
+            result.newid = newServer.vmid;
+            console.log(`✓ Auto-assigned VM ID: ${result.newid}`);
+          }
+        } catch (err) {
+          console.warn(`⚠️  Could not determine auto-assigned VM ID: ${err.message}`);
+        }
+      } else {
+        result.newid = newVmId;
+      }
+
+      return result;
     } catch (error) {
       throw new Error(`Failed to clone server: ${error.message}`);
     }
@@ -209,6 +240,39 @@ class ProxmoxClient {
   }
 
   // Get task status
+  async waitForTask(taskId, node, maxWaitSeconds = 60) {
+    if (!this.token) {
+      await this.authenticate();
+    }
+
+    const startTime = Date.now();
+    const maxWaitMs = maxWaitSeconds * 1000;
+
+    while (Date.now() - startTime < maxWaitMs) {
+      try {
+        const status = await this.getTaskStatus(taskId);
+        
+        // Check if task is finished
+        if (status.status === 'stopped') {
+          if (status.exitstatus === 'OK') {
+            console.log(`✅ Task ${taskId} completed successfully`);
+            return status;
+          } else {
+            throw new Error(`Task failed with status: ${status.exitstatus}`);
+          }
+        }
+
+        // Task still running, wait before polling again
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2 seconds
+      } catch (error) {
+        console.error(`Error waiting for task: ${error.message}`);
+        throw error;
+      }
+    }
+
+    throw new Error(`Task ${taskId} did not complete within ${maxWaitSeconds} seconds`);
+  }
+
   async getTaskStatus(taskId) {
     if (!this.token) {
       await this.authenticate();

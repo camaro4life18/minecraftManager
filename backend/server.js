@@ -939,9 +939,10 @@ async function startServer() {
 
         const { sourceVmId, newVmId, domainName, seed } = req.body;
         
-        if (!sourceVmId || !newVmId || !domainName) {
+        // newVmId is now optional - Proxmox will auto-assign if not provided
+        if (!sourceVmId || !domainName) {
           return res.status(400).json({ 
-            error: 'Missing required fields: sourceVmId, newVmId, domainName' 
+            error: 'Missing required fields: sourceVmId, domainName' 
           });
         }
 
@@ -955,17 +956,25 @@ async function startServer() {
         const newVmName = domainName;
         const result = await proxmox.cloneServer(sourceVmId, newVmId, newVmName);
         
+        // Extract the actual assigned VM ID from the result
+        // If newVmId was provided, use it; otherwise Proxmox assigned one
+        const assignedVmId = newVmId || result.newid || result.vmid;
+        
+        if (!assignedVmId) {
+          console.warn('⚠️  Could not determine assigned VM ID from clone result:', result);
+        }
+        
         // Log the action and track as managed server with seed
-        await ServerCloneLog.create(req.user.userId, sourceVmId, newVmId, newVmName, 'pending');
-        await ManagedServer.create(newVmId, req.user.userId, newVmName, serverSeed);
+        await ServerCloneLog.create(req.user.userId, sourceVmId, assignedVmId, newVmName, 'pending');
+        await ManagedServer.create(assignedVmId, req.user.userId, newVmName, serverSeed);
 
         // Try to add to Velocity server list (optional - won't fail clone if it fails)
         // Note: This assumes the new server IP will be on the Proxmox local network
         // You may need to adjust the IP or add additional configuration
-        if (velocity.isConfigured()) {
+        if (velocity.isConfigured() && assignedVmId) {
           // Extract the numeric part to get the potential IP on local network
           // For example, minecraft02 might be 192.168.x.102 on your network
-          const numericPart = newVmId.toString();
+          const numericPart = assignedVmId.toString();
           const localIp = process.env.VELOCITY_BACKEND_NETWORK || '192.168.1';
           const serverIp = `${localIp}.${numericPart}`;
           
@@ -980,7 +989,7 @@ async function startServer() {
           }
         }
 
-        res.json({ success: true, taskId: result, domainName, seed: serverSeed });
+        res.json({ success: true, taskId: result, vmid: assignedVmId, domainName, seed: serverSeed });
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
