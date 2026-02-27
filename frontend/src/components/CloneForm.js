@@ -18,6 +18,13 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
   const [consoleLogs, setConsoleLogs] = useState([]);
   const [showConsole, setShowConsole] = useState(false);
 
+  // Prevent closing modal by clicking overlay when loading
+  const handleOverlayClick = (e) => {
+    if (e.target === e.currentTarget && !loading) {
+      onClose();
+    }
+  };
+
   // Fetch available nodes and storage when component mounts
   useEffect(() => {
     const fetchCloneOptions = async () => {
@@ -169,8 +176,11 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={e => e.stopPropagation()}>
+    <div 
+      className={`modal-overlay ${loading ? 'loading' : ''}`} 
+      onClick={loading ? undefined : handleOverlayClick}
+    >
+      <div className={`modal-content ${loading ? 'loading' : ''}`} onClick={e => e.stopPropagation()}>
         <h2>Clone Server</h2>
         <p>Source: <strong>{sourceServer.name}</strong> (ID: {sourceServer.vmid})</p>
 

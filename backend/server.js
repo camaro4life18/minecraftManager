@@ -41,6 +41,7 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 const routerServiceUrl = process.env.ROUTER_SERVICE_URL || 'http://localhost:7001';
+const dhcpEnabled = process.env.DHCP_ENABLED !== 'false';
 
 const routerServicePost = async (path, payload) => {
   try {
@@ -709,6 +710,12 @@ async function startServer() {
     // Get DHCP reservations from router
     app.get('/api/admin/router/dhcp-reservations', verifyToken, requireAdmin, async (req, res) => {
       try {
+        if (!dhcpEnabled) {
+          return res.status(503).json({
+            error: 'DHCP functionality is disabled on the server.'
+          });
+        }
+
         const routerHost = await AppConfig.get('router_host');
         const routerUsername = await AppConfig.get('router_username');
         const routerPassword = await AppConfig.get('router_password');
@@ -1164,44 +1171,70 @@ async function startServer() {
 
         console.log(`🔄 Attempting to clone VM ${sourceVmId} to ${domainName}...`);
 
-        // Router config is required for IP reservation
-        const routerHost = await AppConfig.get('router_host');
-        const routerUsername = await AppConfig.get('router_username');
-        const routerPassword = await AppConfig.get('router_password');
-        const routerUseHttps = (await AppConfig.get('router_use_https')) !== 'false';
-
-        if (!routerHost || !routerUsername || !routerPassword) {
-          return res.status(400).json({
-            error: 'Router not configured. Configure ASUS router before cloning.'
-          });
-        }
-
-        // Pick an available IP from 192.168.1.225-230 (or configured network prefix)
-        const reservationsResult = await routerServicePost('/dhcp-reservations', {
-          host: routerHost,
-          username: routerUsername,
-          password: routerPassword,
-          useHttps: routerUseHttps
-        });
-
-        const reservations = reservationsResult.reservations || [];
-        const usedIps = new Set(reservations.map(r => r.ip));
-        const ipRangeStart = 225;
-        const ipRangeEnd = 230;
-
         let targetIp = null;
-        for (let i = ipRangeStart; i <= ipRangeEnd; i += 1) {
-          const candidate = `${localIp}.${i}`;
-          if (!usedIps.has(candidate)) {
-            targetIp = candidate;
-            break;
-          }
-        }
+        let routerHost = null;
+        let routerUsername = null;
+        let routerPassword = null;
+        let routerUseHttps = true;
 
-        if (!targetIp) {
-          return res.status(400).json({
-            error: `No available IPs in ${localIp}.${ipRangeStart}-${ipRangeEnd}.`
+        if (dhcpEnabled) {
+          // Router config is required for IP reservation
+          routerHost = await AppConfig.get('router_host');
+          routerUsername = await AppConfig.get('router_username');
+          routerPassword = await AppConfig.get('router_password');
+          routerUseHttps = (await AppConfig.get('router_use_https')) !== 'false';
+
+          if (!routerHost || !routerUsername || !routerPassword) {
+            return res.status(400).json({
+              error: 'Router not configured. Configure ASUS router before cloning.'
+            });
+          }
+
+          // Pick an available IP from 192.168.1.225-230 (or configured network prefix)
+          const reservationsResult = await routerServicePost('/dhcp-reservations', {
+            host: routerHost,
+            username: routerUsername,
+            password: routerPassword,
+            useHttps: routerUseHttps
           });
+
+          // SAFETY CHECK: Verify we got a valid result from router service
+          if (reservationsResult.error) {
+            console.error(`❌ Router service error getting reservations: ${reservationsResult.error}`);
+            return res.status(500).json({
+              error: `Failed to get current DHCP reservations from router: ${reservationsResult.error}. Cannot safely proceed with clone.`
+            });
+          }
+
+          const reservations = reservationsResult.reservations || [];
+          
+          // LOG: How many reservations we found
+          console.log(`📊 Current DHCP reservations: ${reservations.length}`);
+          if (reservations.length > 0) {
+            console.log(`   Found IPs: ${reservations.map(r => r.ip).join(', ')}`);
+          } else {
+            console.log(`   ⚠️  WARNING: No existing DHCP reservations found on router`);
+          }
+          
+          const usedIps = new Set(reservations.map(r => r.ip));
+          const ipRangeStart = 225;
+          const ipRangeEnd = 230;
+
+          for (let i = ipRangeStart; i <= ipRangeEnd; i += 1) {
+            const candidate = `${localIp}.${i}`;
+            if (!usedIps.has(candidate)) {
+              targetIp = candidate;
+              break;
+            }
+          }
+
+          if (!targetIp) {
+            return res.status(400).json({
+              error: `No available IPs in ${localIp}.${ipRangeStart}-${ipRangeEnd}.`
+            });
+          }
+        } else {
+          console.log('⚠️  DHCP is disabled. Skipping router integration and IP reservation.');
         }
 
         // Generate random seed if not provided or if explicitly requested
@@ -1334,66 +1367,72 @@ async function startServer() {
             });
           }
 
-          console.log(`🌐 Creating DHCP reservation for VM ${assignedVmId}...`);
+          if (!dhcpEnabled) {
+            console.log('⚠️  DHCP is disabled. Skipping DHCP reservation step.');
+            dhcpReservationResult = { success: false, skipped: true };
+            await CloneStatus.completeStep(assignedVmId, 'dhcp_reserved');
+          } else {
+            console.log(`🌐 Creating DHCP reservation for VM ${assignedVmId}...`);
 
-          // Get VM's MAC address from Proxmox with retry (VM network config may take a few seconds)
-          let networkConfig = null;
-          let retryCount = 0;
-          const maxRetries = 10; // 10 attempts × 3 seconds = 30 seconds (clone is already complete)
-          
-          while (retryCount < maxRetries) {
-            try {
-              networkConfig = await cloneProxmox.getVMNetworkConfig(assignedVmId);
-              if (networkConfig.primaryMac) {
-                break; // MAC found, exit retry loop
+            // Get VM's MAC address from Proxmox with retry (VM network config may take a few seconds)
+            let networkConfig = null;
+            let retryCount = 0;
+            const maxRetries = 10; // 10 attempts × 3 seconds = 30 seconds (clone is already complete)
+            
+            while (retryCount < maxRetries) {
+              try {
+                networkConfig = await cloneProxmox.getVMNetworkConfig(assignedVmId);
+                if (networkConfig.primaryMac) {
+                  break; // MAC found, exit retry loop
+                }
+              } catch (err) {
+                console.warn(`⚠️  Attempt ${retryCount + 1}: Could not get MAC, retrying...`);
               }
-            } catch (err) {
-              console.warn(`⚠️  Attempt ${retryCount + 1}: Could not get MAC, retrying...`);
+              
+              retryCount++;
+              if (retryCount < maxRetries) {
+                // Wait 3 seconds before retry
+                console.log(`⏳ Waiting 3 seconds before retry (${retryCount}/${maxRetries})...`);
+                await new Promise(resolve => setTimeout(resolve, 3000));
+              }
             }
             
-            retryCount++;
-            if (retryCount < maxRetries) {
-              // Wait 3 seconds before retry
-              console.log(`⏳ Waiting 3 seconds before retry (${retryCount}/${maxRetries})...`);
-              await new Promise(resolve => setTimeout(resolve, 3000));
-            }
-          }
-          
-          if (networkConfig?.primaryMac) {
-            const macAddress = networkConfig.primaryMac;
+            if (networkConfig?.primaryMac) {
+              const macAddress = networkConfig.primaryMac;
 
-            console.log(`   MAC: ${macAddress}`);
-            console.log(`   Target IP: ${targetIp}`);
+              console.log(`   MAC: ${macAddress}`);
+              console.log(`   Target IP: ${targetIp}`);
 
-            dhcpReservationResult = await routerServicePost('/dhcp-reservation', {
-              host: routerHost,
-              username: routerUsername,
-              password: routerPassword,
-              useHttps: routerUseHttps,
-              mac: macAddress,
-              ip: targetIp,
-              name: domainName
-            });
+              dhcpReservationResult = await routerServicePost('/dhcp-reservation', {
+                host: routerHost,
+                username: routerUsername,
+                password: routerPassword,
+                useHttps: routerUseHttps,
+                mac: macAddress,
+                ip: targetIp,
+                name: domainName
+              });
 
-            if (dhcpReservationResult.success) {
-              console.log(`✅ DHCP reservation created: ${macAddress} → ${targetIp}`);
-              await CloneStatus.completeStep(assignedVmId, 'dhcp_reserved', { ipAddress: targetIp, macAddress });
+              if (dhcpReservationResult.success) {
+                console.log(`✅ DHCP reservation created: ${macAddress} → ${targetIp}`);
+                await CloneStatus.completeStep(assignedVmId, 'dhcp_reserved', { ipAddress: targetIp, macAddress });
+              } else {
+                await CloneStatus.markPaused(assignedVmId, 'Failed to create DHCP reservation', 'dhcp_reservation');
+                return res.status(500).json({
+                  error: 'Failed to create DHCP reservation on router.',
+                  vmid: assignedVmId,
+                  canRetry: true
+                });
+              }
             } else {
-              await CloneStatus.markPaused(assignedVmId, 'Failed to create DHCP reservation', 'dhcp_reservation');
+              await CloneStatus.markPaused(assignedVmId, `Could not get MAC address after ${maxRetries} attempts`, 'dhcp_reservation');
               return res.status(500).json({
-                error: 'Failed to create DHCP reservation on router.',
+                error: `Could not get MAC address for VM ${assignedVmId} after ${maxRetries} attempts (${maxRetries * 3} seconds). The network config may be delayed.`,
+                vmId: assignedVmId,
                 vmid: assignedVmId,
                 canRetry: true
               });
             }
-          } else {
-            await CloneStatus.markPaused(assignedVmId, `Could not get MAC address after ${maxRetries} attempts`, 'dhcp_reservation');
-            return res.status(500).json({
-              error: `Could not get MAC address for VM ${assignedVmId} after ${maxRetries} attempts (${maxRetries * 3} seconds). The network config may be delayed.`,
-              vmId: assignedVmId,
-              vmid: assignedVmId,
-              canRetry: true
-            });
           }
         } catch (routerError) {
           console.error(`⚠️  Failed to create DHCP reservation:`, routerError.message);
@@ -1406,7 +1445,43 @@ async function startServer() {
         }
 
         // Start the newly cloned VM
+        // Note: VM config file takes a moment to be written after clone/migration
         console.log(`🚀 Starting VM ${assignedVmId}...`);
+        
+        // Wait for VM to be ready by checking its status
+        let vmReady = false;
+        let waitAttempts = 0;
+        const maxWaitAttempts = 10; // ~10 seconds total (1 second per attempt)
+        
+        while (!vmReady && waitAttempts < maxWaitAttempts) {
+          try {
+            // Check VM status directly - this will fail if config doesn't exist
+            const vmDetails = await cloneProxmox.getServerDetails(assignedVmId);
+            
+            if (vmDetails && vmDetails.status) {
+              vmReady = true;
+              console.log(`✅ VM config confirmed (status: ${vmDetails.status.status || 'unknown'}) after ${waitAttempts} second(s)`);
+            } else {
+              waitAttempts++;
+              if (waitAttempts < maxWaitAttempts) {
+                console.log(`⏳ Waiting for VM status... (${waitAttempts}/${maxWaitAttempts})`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
+            }
+          } catch (checkErr) {
+            // VM not ready yet (config file doesn't exist or other issue)
+            waitAttempts++;
+            if (waitAttempts < maxWaitAttempts) {
+              console.log(`⏳ VM config not ready yet, retrying... (${waitAttempts}/${maxWaitAttempts}): ${checkErr.message}`);
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          }
+        }
+        
+        if (!vmReady) {
+          console.warn(`⚠️  VM status not confirmed after ${maxWaitAttempts} seconds. Proceeding anyway...`);
+        }
+        
         try {
           const startResult = await cloneProxmox.startServer(assignedVmId);
           console.log(`✅ VM ${assignedVmId} starting with task: ${startResult}`);
@@ -1464,7 +1539,7 @@ async function startServer() {
         // Note: This assumes the new server IP will be on the Proxmox local network
         // You may need to adjust the IP or add additional configuration
         let velocityResult = null;
-        if (velocity.isConfigured() && assignedVmId) {
+        if (velocity.isConfigured() && assignedVmId && targetIp) {
           const serverIp = targetIp;
           
           console.log(`🎮 Adding to Velocity: ${domainName} → ${serverIp}:25565`);
@@ -1480,6 +1555,8 @@ async function startServer() {
           } else {
             console.warn(`⚠️  Could not fully configure velocity, but VM clone succeeded: ${velocityResult.message}`);
           }
+        } else if (velocity.isConfigured() && assignedVmId && !targetIp) {
+          console.log('⚠️  Skipping Velocity registration because DHCP is disabled and no target IP is available.');
         }
 
         // Mark clone as completed
@@ -1677,6 +1754,10 @@ async function startServer() {
     // Retry MAC address lookup for an already-cloned VM
     app.post('/api/servers/:vmid/retry-mac-lookup', verifyToken, async (req, res) => {
       try {
+        if (!dhcpEnabled) {
+          return res.status(503).json({ error: 'DHCP functionality is disabled on the server.' });
+        }
+
         const vmid = parseInt(req.params.vmid);
         const { targetIp } = req.body;
 

@@ -28,6 +28,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=5000
+      - DHCP_ENABLED=false
       - DB_HOST=localhost
       - DB_PORT=5433
       - DB_USER=${DB_USER:-minecraft_user}

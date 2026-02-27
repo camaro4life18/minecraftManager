@@ -11,6 +11,17 @@
   align-items: center;
   z-index: 1000;
   animation: fadeIn 0.3s ease-out;
+  cursor: pointer;
+}
+
+/* Prevent overlay interaction during loading */
+.modal-overlay.loading {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.modal-overlay.loading .modal-content {
+  pointer-events: all;
 }
 
 @keyframes fadeIn {
@@ -29,8 +40,18 @@
   padding: 2rem;
   max-width: 500px;
   width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
   animation: slideUp 0.3s ease-out;
+  position: relative;
+}
+
+/* Expand modal during loading to show console */
+.modal-content.loading {
+  max-width: 650px;
 }
 
 @keyframes slideUp {
@@ -268,10 +289,11 @@
   background-color: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(52, 168, 224, 0.2);
   border-radius: 4px;
-  max-height: 250px;
+  max-height: 300px;
   overflow-y: auto;
   font-family: 'Courier New', monospace;
   font-size: 0.8em;
+  flex-shrink: 0;
 }
 
 .console-line {

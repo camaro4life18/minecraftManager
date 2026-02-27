@@ -23,115 +23,182 @@ def run_async(coro):
 
 
 def _extract_staticlist(data: Any) -> str:
+    """Extract dhcp_staticlist from various response formats.
+    
+    The router API can return data in different formats:
+    1. Direct dict with "dhcp_staticlist" key
+    2. Nested under "nvram_get"
+    3. Other key variations
+    """
+    result = ""
+    
     if isinstance(data, dict):
+        # Try direct key first
         if "dhcp_staticlist" in data:
             result = data.get("dhcp_staticlist") or ""
-            print(f"[DHCP] _extract_staticlist: Found in top level: {repr(result[:200])}")
+            print(f"[DHCP] _extract_staticlist: Found at top level (length: {len(result)})")
             return result
+            
+        # Try nested under nvram_get
         if "nvram_get" in data and isinstance(data.get("nvram_get"), dict):
             nested = data.get("nvram_get")
             if nested and "dhcp_staticlist" in nested:
                 result = nested.get("dhcp_staticlist") or ""
-                print(f"[DHCP] _extract_staticlist: Found in nvram_get: {repr(result[:200])}")
+                print(f"[DHCP] _extract_staticlist: Found in nvram_get (length: {len(result)})")
                 return result
+        
+        # Try any key containing dhcp_staticlist
         for key, value in data.items():
-            if "dhcp_staticlist" in str(key):
+            if "dhcp_staticlist" in str(key).lower():
                 result = value or ""
-                print(f"[DHCP] _extract_staticlist: Found in key '{key}': {repr(result[:200])}")
+                print(f"[DHCP] _extract_staticlist: Found in key '{key}' (length: {len(result)})")
                 return result
-    print(f"[DHCP] _extract_staticlist: NOT FOUND in data: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+    
+    # Warn if data not found - this is critical!
+    data_keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+    print(f"[DHCP] _extract_staticlist: WARNING - dhcp_staticlist NOT FOUND. Data structure: {data_keys}")
+    print(f"[DHCP] _extract_staticlist: Full response: {data}")
+    
     return ""
 
 
 def _parse_staticlist(raw: str) -> List[Dict[str, str]]:
+    """Parse dhcp_staticlist from router into individual reservations.
+    
+    Supports multiple formats:
+    - MAC:IP:name\tMAC:IP:name\t... (preferred)
+    - <MAC>IP>name (legacy)
+    - Other separators
+    """
     reservations: List[Dict[str, str]] = []
-    if not raw:
-        print(f"[DHCP] _parse_staticlist: Raw is empty")
+    
+    if not raw or not raw.strip():
+        print(f"[DHCP] _parse_staticlist: Raw is empty or whitespace")
         return reservations
-
-    print(f"[DHCP] _parse_staticlist: Input (first 300 chars): {repr(raw[:300])}")
     
-    # Try both formats: <MAC>IP>NAME and MAC:IP:NAME\t
-    entries = []
+    print(f"[DHCP] _parse_staticlist: Input length: {len(raw)} bytes, first 200 chars: {repr(raw[:200])}")
     
-    # Format 1: <MAC>IP>NAME delimeted
+    # Try format 1: <MAC>IP>NAME delimited (legacy)
     if "<" in raw and ">" in raw:
-        print(f"[DHCP] _parse_staticlist: Detected <> delimiter format")
-        entries_raw = raw.split("<")
-        for entry in entries_raw:
-            if not entry:
-                continue
-            parts = entry.split(">")
-            if len(parts) >= 3:
-                entries.append({
-                    "mac": parts[0].upper(),
-                    "ip": parts[1],
-                    "name": parts[2]
-                })
-    # Format 2: MAC:IP:NAME\t separated
-    elif ":" in raw and "\t" in raw:
-        print(f"[DHCP] _parse_staticlist: Detected colon:tab delimiter format")
-        entries_raw = raw.split("\t")
-        for entry in entries_raw:
-            if not entry:
-                continue
-            parts = entry.split(":")
-            if len(parts) >= 3:
-                entries.append({
-                    "mac": parts[0].upper(),
-                    "ip": parts[1],
-                    "name": parts[2]
-                })
-    # Format 3: MAC:IP:NAME separated (might have semicolon or other delimiter)
-    elif ":" in raw:
-        print(f"[DHCP] _parse_staticlist: Detected colon-separated format (no tabs)")
-        # Try to split intelligently - might be MAC:IP:name;MAC:IP:name or other
-        # First detect potential separator
-        possible_separators = [";", "\n", " "]
-        separator = None
-        for sep in possible_separators:
-            if sep in raw:
-                separator = sep
-                print(f"[DHCP] _parse_staticlist: Using separator '{repr(separator)}'")
-                break
+        print(f"[DHCP] _parse_staticlist: Attempting <> delimiter format")
+        try:
+            entries_raw = raw.split("<")
+            for entry in entries_raw:
+                if not entry or not entry.strip():
+                    continue
+                parts = entry.split(">")
+                if len(parts) >= 3:
+                    mac = parts[0].strip().upper()
+                    ip = parts[1].strip()
+                    name = parts[2].strip()
+                    if mac and ip:
+                        reservations.append({"mac": mac, "ip": ip, "name": name})
+            
+            if reservations:
+                print(f"[DHCP] _parse_staticlist: Successfully parsed {len(reservations)} entries using <> format")
+                return reservations
+        except Exception as e:
+            print(f"[DHCP] _parse_staticlist: Error parsing <> format: {e}")
+    
+    # Try format 2: MAC:IP:NAME with tab/semicolon/newline separators
+    if ":" in raw:
+        print(f"[DHCP] _parse_staticlist: Attempting colon:separator format")
         
-        if separator:
-            entries_raw = raw.split(separator)
+        # Detect separator
+        separator = None
+        if "\t" in raw:
+            separator = "\t"
+            print(f"[DHCP] _parse_staticlist: Detected TAB separator")
+        elif ";" in raw:
+            separator = ";"
+            print(f"[DHCP] _parse_staticlist: Detected SEMICOLON separator")
+        elif "\n" in raw:
+            separator = "\n"
+            print(f"[DHCP] _parse_staticlist: Detected NEWLINE separator")
+        elif " " in raw and raw.count(" ") > raw.count(":"):
+            # More spaces than colons suggests space separator
+            separator = " "
+            print(f"[DHCP] _parse_staticlist: Detected SPACE separator")
         else:
             # Single entry or unknown format
-            entries_raw = [raw]
+            print(f"[DHCP] _parse_staticlist: No separator found, treating as single entry")
+            separator = None
         
-        for entry in entries_raw:
-            if not entry or entry.isspace():
-                continue
-            parts = entry.split(":")
-            if len(parts) >= 2:  # At least MAC:IP
-                entries.append({
-                    "mac": parts[0].upper(),
-                    "ip": parts[1],
-                    "name": parts[2] if len(parts) > 2 else ""
-                })
-    else:
-        print(f"[DHCP] _parse_staticlist: WARNING - Unknown format, no recognized delimiters")
+        try:
+            if separator:
+                entries_raw = raw.split(separator)
+            else:
+                entries_raw = [raw]
+            
+            for entry in entries_raw:
+                if not entry or not entry.strip():
+                    continue
+                
+                parts = entry.split(":")
+                if len(parts) >= 2:
+                    mac = parts[0].strip().upper()
+                    ip = parts[1].strip()
+                    name = parts[2].strip() if len(parts) > 2 else ""
+                    
+                    # Validate MAC and IP format
+                    if mac and ip:
+                        reservations.append({"mac": mac, "ip": ip, "name": name})
+                    else:
+                        print(f"[DHCP] _parse_staticlist: Skipping invalid entry (no MAC or IP): {entry}")
+            
+            if reservations:
+                print(f"[DHCP] _parse_staticlist: Successfully parsed {len(reservations)} entries using colon format")
+                return reservations
+        except Exception as e:
+            print(f"[DHCP] _parse_staticlist: Error parsing colon format: {e}")
     
-    print(f"[DHCP] _parse_staticlist: Parsed {len(entries)} entries")
-    for i, e in enumerate(entries[:5]):  # Log first 5
-        print(f"[DHCP]   Entry {i}: {e}")
-    if len(entries) > 5:
-        print(f"[DHCP]   ... and {len(entries) - 5} more")
+    # If we get here, we couldn't parse anything
+    print(f"[DHCP] _parse_staticlist: WARNING - Could not parse any entries from raw data")
+    print(f"[DHCP] _parse_staticlist: Parsed 0 entries")
     
-    return entries
+    return reservations
 
 
 def _format_staticlist(reservations: List[Dict[str, str]]) -> str:
-    # IMPORTANT: Router format should be MAC:IP:name with tab separators
-    # NOT the <MAC>IP>NAME format from old code
-    result = "\t".join(
-        f"{r['mac']}:{r['ip']}:{r.get('name', '')}"
-        for r in reservations
-    )
-    print(f"[DHCP] _format_staticlist: Input count: {len(reservations)}")
-    print(f"[DHCP] _format_staticlist: Output (first 300 chars): {repr(result[:300])}")
+    """Format reservations back to router dhcp_staticlist format.
+    
+    Uses MAC:IP:name with tab separators (no trailing tab).
+    
+    Args:
+        reservations: List of reservation dicts with 'mac', 'ip', 'name' keys
+        
+    Returns:
+        Formatted string ready for router API
+    """
+    if not reservations:
+        print(f"[DHCP] _format_staticlist: No reservations to format")
+        return ""
+    
+    # Build entries, filtering out any with missing MAC or IP
+    entries = []
+    for r in reservations:
+        mac = r.get('mac', '').strip()
+        ip = r.get('ip', '').strip()
+        name = r.get('name', '').strip()
+        
+        if not mac or not ip:
+            print(f"[DHCP] _format_staticlist: Skipping entry with missing MAC or IP: {r}")
+            continue
+        
+        # Validate MAC format (should be XX:XX:XX:XX:XX:XX)
+        if mac.count(':') != 5:
+            print(f"[DHCP] _format_staticlist: WARNING - Invalid MAC format: {mac}")
+        
+        entries.append(f"{mac}:{ip}:{name}")
+    
+    # Join with tabs (no trailing tab)
+    result = "\t".join(entries)
+    
+    print(f"[DHCP] _format_staticlist: Input reservations: {len(reservations)}")
+    print(f"[DHCP] _format_staticlist: Valid entries: {len(entries)}")
+    print(f"[DHCP] _format_staticlist: Output length: {len(result)} bytes")
+    print(f"[DHCP] _format_staticlist: First 200 chars: {repr(result[:200])}")
+    
     return result
 
 
@@ -161,10 +228,22 @@ async def _with_router(host: str, username: str, password: str, use_ssl: bool, f
 
 
 async def _get_reservations(host: str, username: str, password: str, use_ssl: bool):
+    """Retrieve current DHCP reservations from router."""
     async def _fetch(router: AsusRouter):
-        data = await router.async_api_hook("nvram_get(dhcp_staticlist)")
-        raw = _extract_staticlist(data)
-        return _parse_staticlist(raw)
+        print(f"[DHCP] _fetch: Fetching dhcp_staticlist from router...")
+        try:
+            data = await router.async_api_hook("nvram_get(dhcp_staticlist)")
+            raw = _extract_staticlist(data)
+            reservations = _parse_staticlist(raw)
+            print(f"[DHCP] _fetch: Retrieved {len(reservations)} reservations")
+            for i, res in enumerate(reservations[:5]):
+                print(f"[DHCP] _fetch:   [{i}] {res['mac']} -> {res['ip']} ({res.get('name', '')})")
+            if len(reservations) > 5:
+                print(f"[DHCP] _fetch:   ... and {len(reservations) - 5} more")
+            return reservations
+        except Exception as e:
+            print(f"[DHCP] _fetch: ERROR - {e}")
+            raise
 
     return await _with_router(host, username, password, use_ssl, _fetch)
 
@@ -178,47 +257,85 @@ async def _add_reservation(
     ip: str,
     name: str,
 ):
-    print(f"[DHCP] _add_reservation: Adding {mac} -> {ip} ({name})")
+    """Add a DHCP reservation to the router without modifying existing ones.
+    
+    This function:
+    1. Fetches current DHCP staticlist from router (raw)
+    2. Appends new entry directly to the raw string
+    3. Sends back to router
+    
+    CRITICAL: We do NOT parse/modify existing entries - just append the new one.
+    This prevents data loss if parsing fails or format changes.
+    """
+    print(f"[DHCP] _add_reservation: Adding/updating {mac} -> {ip} ({name})")
     
     async def _update(router: AsusRouter):
-        print(f"[DHCP] _update: Fetching current dhcp_staticlist from router...")
-        data = await router.async_api_hook("nvram_get(dhcp_staticlist)")
+        print(f"[DHCP] _update: Step 1 - Fetching current dhcp_staticlist from router...")
+        
+        try:
+            data = await router.async_api_hook("nvram_get(dhcp_staticlist)")
+            print(f"[DHCP] _update: Router API returned: {type(data).__name__}")
+        except Exception as e:
+            print(f"[DHCP] _update: ERROR fetching from router: {e}")
+            raise
+        
         raw = _extract_staticlist(data)
-        print(f"[DHCP] _update: Raw staticlist length: {len(raw)} bytes")
+        print(f"[DHCP] _update: Step 2 - Extracted staticlist: {len(raw)} bytes")
         
-        reservations = _parse_staticlist(raw)
-        print(f"[DHCP] _update: Parsed {len(reservations)} existing reservations")
-
-        updated = False
-        for reservation in reservations:
-            if reservation["mac"].lower() == mac.lower():
-                print(f"[DHCP] _update: Updating existing reservation for {mac}")
-                reservation["ip"] = ip
-                reservation["name"] = name
-                updated = True
-                break
-
-        if not updated:
-            print(f"[DHCP] _update: Adding new reservation for {mac}")
-            reservations.append({
-                "mac": mac.upper(),
-                "ip": ip,
-                "name": name,
-            })
-
-        staticlist = _format_staticlist(reservations)
-        print(f"[DHCP] _update: Sending {len(reservations)} total reservations back to router")
-        print(f"[DHCP] _update: Formatted staticlist length: {len(staticlist)} bytes")
+        mac_normalized = mac.upper()
         
+        # Check if this MAC already exists in the raw string (simple substring check)
+        # Look for MAC:IP:name pattern
+        mac_search = f"{mac_normalized}:"
+        if mac_search in raw:
+            print(f"[DHCP] _update: Step 3 - Found existing entry for {mac_normalized}, updating it...")
+            # Simple approach: parse just enough to find and replace the entry
+            entries_raw = raw.split("\t")
+            updated = False
+            
+            for i, entry in enumerate(entries_raw):
+                if entry.startswith(mac_normalized + ":"):
+                    print(f"[DHCP] _update: Replacing: {entry}")
+                    entries_raw[i] = f"{mac_normalized}:{ip}:{name}"
+                    print(f"[DHCP] _update: With: {entries_raw[i]}")
+                    updated = True
+                    break
+            
+            if updated:
+                raw = "\t".join(entries_raw)
+        else:
+            print(f"[DHCP] _update: Step 3 - MAC {mac_normalized} not found, appending new entry...")
+            # Simply append the new entry
+            # Use tab separator, but only if raw is not empty
+            if raw:
+                raw = f"{raw}\t{mac_normalized}:{ip}:{name}"
+            else:
+                raw = f"{mac_normalized}:{ip}:{name}"
+            print(f"[DHCP] _update: Appended new entry")
+        
+        print(f"[DHCP] _update: Step 4 - Final staticlist: {len(raw)} bytes")
+        print(f"[DHCP] _update: Content (first 200 chars): {repr(raw[:200])}")
+        
+        if not raw:
+            raise ValueError("[DHCP] _update: Final staticlist is empty - refusing to write!")
+        
+        # Prepare command to send raw string back
         commands = {
             "action_mode": "apply",
             "rc_service": "restart_dhcpd",
-            "dhcp_staticlist": staticlist,
+            "dhcp_staticlist": raw,
         }
-
-        print(f"[DHCP] _update: Calling async_api_command with staticlist...")
-        result = await router.async_api_command(commands, EndpointControl.COMMAND)
-        print(f"[DHCP] _update: Command result: {result}")
+        
+        print(f"[DHCP] _update: Step 5 - Sending command to router (staticlist={len(raw)} bytes)...")
+        
+        try:
+            result = await router.async_api_command(commands, EndpointControl.COMMAND)
+            print(f"[DHCP] _update: Step 6 - Command succeeded! Result: {result}")
+        except Exception as e:
+            print(f"[DHCP] _update: Step 6 - ERROR sending command to router: {e}")
+            print(f"[DHCP] _update: Failed command: {commands}")
+            raise
+        
         return True
 
     return await _with_router(host, username, password, use_ssl, _update)
