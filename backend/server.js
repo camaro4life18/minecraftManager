@@ -997,20 +997,24 @@ async function startServer() {
         const storage = await cloneProxmox.getStorage();
 
         const result = { 
-          nodes: nodes.map(n => ({ id: n.node, name: n.node })),
-          storage: storage.map(s => {
-            const available = s.avail || s.available || 0;
-            const used = s.used || 0;
-            const total = s.size || s.maxfiles || (available + used) || 1;
-            return {
-              id: s.storage, 
-              name: s.storage,
-              type: s.type,
-              available: Math.max(0, available), // Ensure non-negative
-              used: Math.max(0, used),
-              size: Math.max(0, total)
-            };
-          })
+          nodes: nodes
+            .map(n => ({ id: n.node, name: n.node }))
+            .sort((a, b) => a.name.localeCompare(b.name)),
+          storage: storage
+            .map(s => {
+              const available = s.avail || s.available || 0;
+              const used = s.used || 0;
+              const total = s.size || s.maxfiles || (available + used) || 1;
+              return {
+                id: s.storage, 
+                name: s.storage,
+                type: s.type,
+                available: Math.max(0, available), // Ensure non-negative
+                used: Math.max(0, used),
+                size: Math.max(0, total)
+              };
+            })
+            .sort((a, b) => a.name.localeCompare(b.name))
         };
         
         console.log(`✅ Sending ${result.storage.length} storage options to client`);
