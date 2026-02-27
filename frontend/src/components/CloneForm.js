@@ -17,6 +17,9 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
   const [optionsLoading, setOptionsLoading] = useState(true);
   const [consoleLogs, setConsoleLogs] = useState([]);
   const [showConsole, setShowConsole] = useState(false);
+  const [clonedVmId, setClonedVmId] = useState(null);
+  const [cloneProgress, setCloneProgress] = useState(0);
+  const [cloneStep, setCloneStep] = useState('');
 
   // Prevent closing modal by clicking overlay when loading
   const handleOverlayClick = (e) => {
@@ -156,23 +159,76 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
 
       const result = await response.json();
       const seedDisplay = result.seed || seed;
-      addLog(`✅ Clone successful!`);
-      addLog(`🆔 VM ID: ${result.vmid || result.newVmId}`);
-      addLog(`🌱 Seed: ${seedDisplay}`);
-      addLog(`📍 Server is being set up...`);
-      addLog('');
-      addLog('✨ Clone completed! Server will be ready shortly.');
+      const newVmId = result.vmid || result.newVmId;
       
-      setTimeout(() => {
-        alert(`Server cloning started!\n\nDomain: ${result.domainName}\nSeed: ${seedDisplay}\n\nThis may take a few minutes. Once complete, it will be added to the velocity server list.`);
-        onSuccess();
-      }, 1000);
+      setClonedVmId(newVmId);
+      addLog(`✅ Clone initiated!`);
+      addLog(`🆔 VM ID: ${newVmId}`);
+      addLog(`🌱 Seed: ${seedDisplay}`);
+      addLog(`📍 Monitoring clone progress...`);
+      
+      // Start polling for clone progress
+      pollCloneProgress(newVmId, addLog);
     } catch (err) {
       setError(err.message);
       setConsoleLogs(prev => [...prev, `❌ Error: ${err.message}`]);
-    } finally {
       setLoading(false);
     }
+  };
+
+  // Poll for clone progress
+  const pollCloneProgress = async (vmid, addLog) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch(`${apiBase}/api/servers/${vmid}/clone-status`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (response.ok) {
+          const status = await response.json();
+          
+          // Update progress
+          if (status.progress_percent !== null && status.progress_percent !== undefined) {
+            setCloneProgress(status.progress_percent);
+          }
+          
+          // Update step
+          if (status.current_step) {
+            setCloneStep(status.current_step);
+          }
+          
+          // Check if complete or failed
+          if (status.status === 'completed') {
+            clearInterval(pollInterval);
+            addLog('✨ Clone completed successfully!');
+            setCloneProgress(100);
+            setLoading(false);
+            setTimeout(() => {
+              alert(`Server cloning completed!\n\nDomain: ${status.domain_name}\n\nThe server is ready and will appear in the list shortly.`);
+              onSuccess();
+            }, 1500);
+          } else if (status.status === 'failed') {
+            clearInterval(pollInterval);
+            addLog(`❌ Clone failed: ${status.error_message || 'Unknown error'}`);
+            setError(status.error_message || 'Clone failed');
+            setLoading(false);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to poll clone status:', err);
+      }
+    }, 2000); // Poll every 2 seconds
+    
+    // Clear interval after 10 minutes max
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      if (loading) {
+        addLog('⚠️ Clone monitoring timed out. Check status manually.');
+        setLoading(false);
+      }
+    }, 600000);
   };
 
   return (
@@ -321,8 +377,25 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
 
           {loading && (
             <div className="clone-progress">
-              <p>⏳ <strong>Clone in progress...</strong></p>
-              <p style={{fontSize: '0.85em', color: '#666'}}>
+              <p>⏳ <strong>Clone in progress... {cloneProgress}%</strong></p>
+              
+              {/* Progress Bar */}
+              <div className="progress-bar-container">
+                <div 
+                  className="progress-bar-fill" 
+                  style={{width: `${cloneProgress}%`}}
+                >
+                  {cloneProgress > 5 && <span className="progress-text">{cloneProgress}%</span>}
+                </div>
+              </div>
+              
+              {cloneStep && (
+                <p style={{fontSize: '0.85em', color: '#34a8e0', marginTop: '0.5rem'}}>
+                  Step: {cloneStep}
+                </p>
+              )}
+              
+              <p style={{fontSize: '0.85em', color: '#666', marginTop: '0.5rem'}}>
                 This may take several minutes while the VM is created and configured.<br/>
                 Please do not close this window or refresh the page.
               </p>

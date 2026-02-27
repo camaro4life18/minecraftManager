@@ -43,14 +43,19 @@ export class CloneStatus {
   }
 
   // Update clone step
-  static async updateStep(vmid, currentStep) {
-    const result = await pool.query(
-      `UPDATE clone_status 
-       SET current_step = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE vmid = $2
-       RETURNING *`,
-      [currentStep, vmid]
-    );
+  static async updateStep(vmid, currentStep, progressPercent = null) {
+    let query = `UPDATE clone_status 
+       SET current_step = $1, updated_at = CURRENT_TIMESTAMP`;
+    const params = [currentStep, vmid];
+    
+    if (progressPercent !== null) {
+      query += `, progress_percent = $3`;
+      params.push(progressPercent);
+    }
+    
+    query += ` WHERE vmid = $2 RETURNING *`;
+    
+    const result = await pool.query(query, params);
     return result.rows[0];
   }
 

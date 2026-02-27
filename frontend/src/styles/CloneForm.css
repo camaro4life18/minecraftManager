@@ -282,6 +282,37 @@
   color: #34a8e0;
 }
 
+/* Progress Bar */
+.progress-bar-container {
+  width: 100%;
+  height: 30px;
+  background-color: rgba(0, 0, 0, 0.3);
+  border-radius: 15px;
+  overflow: hidden;
+  margin: 1rem 0;
+  border: 1px solid rgba(52, 168, 224, 0.3);
+  position: relative;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #34a8e0, #2980b9);
+  border-radius: 15px;
+  transition: width 0.5s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  box-shadow: 0 0 10px rgba(52, 168, 224, 0.5);
+}
+
+.progress-text {
+  color: #fff;
+  font-weight: bold;
+  font-size: 0.9em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
 /* Clone Console Output */
 .clone-console {
   margin-top: 0.75rem;

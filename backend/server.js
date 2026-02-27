@@ -1280,19 +1280,31 @@ async function startServer() {
             while (!cloneTaskComplete && waitAttempts < maxWaitAttempts) {
               try {
                 // Query task status from Proxmox
-                const taskResponse = await cloneProxmox.api.get(`/nodes/${node}/tasks/${result.upid}`);
+                const taskResponse = await cloneProxmox.api.get(`/nodes/${node}/tasks/${result.upid}/status`);
                 const taskStatus = taskResponse.data.data;
+
+                // Extract progress if available (ranges from 0 to 1)
+                const progressPercent = taskStatus.pct !== undefined 
+                  ? Math.round(taskStatus.pct * 100) 
+                  : null;
 
                 if (taskStatus.status === 'stopped') {
                   if (taskStatus.exitstatus === 'OK') {
                     console.log(`✅ Clone task completed successfully!`);
+                    await CloneStatus.updateStep(assignedVmId, 'cloning', 100);
                     cloneTaskComplete = true;
                   } else {
                     console.warn(`⚠️  Clone task ended with status: ${taskStatus.exitstatus}`);
                     cloneTaskComplete = true;
                   }
                 } else {
-                  console.log(`⏳ Clone in progress... (attempt ${waitAttempts + 1}/${maxWaitAttempts})`);
+                  // Update progress in database
+                  if (progressPercent !== null) {
+                    await CloneStatus.updateStep(assignedVmId, 'cloning', progressPercent);
+                    console.log(`⏳ Clone in progress... ${progressPercent}% (attempt ${waitAttempts + 1}/${maxWaitAttempts})`);
+                  } else {
+                    console.log(`⏳ Clone in progress... (attempt ${waitAttempts + 1}/${maxWaitAttempts})`);
+                  }
                   await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
                 }
               } catch (taskError) {
