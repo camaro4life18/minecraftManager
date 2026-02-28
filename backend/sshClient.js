@@ -536,8 +536,12 @@ export class MinecraftServerManager {
         console.warn('⚠️  Stop command returned non-zero:', stopResult.stderr);
         // Continue anyway - we already killed the process
       }
+      
+      // Step 3: Reset the failed state so systemd doesn't show it as failed
+      console.log('🔄 Resetting service state...');
+      await this.ssh.executeCommand('sudo -n systemctl reset-failed minecraft.service 2>/dev/null || true');
 
-      // Step 2: Delete world directories
+      // Step 4: Delete world directories
       console.log('🗑️  Deleting old world data...');
       const worldDirs = [levelName, `${levelName}_nether`, `${levelName}_the_end`];
       
@@ -547,7 +551,7 @@ export class MinecraftServerManager {
         console.log(`   Deleted ${dir}: ${result.stdout.trim() || 'Done'}`);
       }
 
-      // Step 3: Update server.properties with new seed
+      // Step 5: Update server.properties with new seed
       console.log('📝 Updating server.properties with new seed...');
       await this.updateServerProperties({
         'level-seed': seed,
