@@ -1741,7 +1741,7 @@ async function startServer() {
 
                   // Test SSH connection with a simple command first
                   console.log(`🔍 Testing SSH connection (attempt ${retryCount + 1}/${maxRetries})...`);
-                  const testResult = await ssh.exec('echo "SSH connection test"');
+                  const testResult = await ssh.executeCommand('echo "SSH connection test"');
                   console.log(`✅ SSH connection successful!`);
 
                   const manager = new MinecraftServerManager(
