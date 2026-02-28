@@ -2419,6 +2419,53 @@ async function startServer() {
       }
     });
 
+    // Manually setup fresh world (admin only - for debugging/recovery)
+    app.post('/api/servers/:vmid/minecraft/setup-world', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const vmid = parseInt(req.params.vmid);
+        const { ip, port, username, privateKey, minecraftPath, minecraftUser, seed } = req.body;
+
+        if (!ip || !port || !username || !privateKey) {
+          return res.status(400).json({ error: 'Missing SSH config: ip, port, username, privateKey required' });
+        }
+
+        const seedToUse = seed || Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+        
+        // Create SSH client with provided config
+        const ssh = new SSHClient({
+          host: ip,
+          port: port,
+          username: username,
+          privateKey: privateKey
+        });
+
+        // Test SSH connection first
+        console.log(`🔍 Testing SSH connection to ${username}@${ip}:${port}...`);
+        await ssh.executeCommand('echo "SSH connection test"');
+        console.log(`✅ SSH connection successful!`);
+
+        const manager = new MinecraftServerManager(
+          ssh,
+          minecraftPath || '/opt/minecraft',
+          minecraftUser || 'minecraft'
+        );
+
+        console.log(`🌍 Setting up fresh world with seed ${seedToUse}...`);
+        const result = await manager.setupFreshWorld(seedToUse);
+
+        if (result.success) {
+          console.log(`✅ World setup successful for VM ${vmid}`);
+          res.json({ success: true, seed: seedToUse, message: 'World setup completed successfully' });
+        } else {
+          console.warn(`⚠️  World setup had issues: ${result.message}`);
+          res.status(400).json({ success: false, message: result.message });
+        }
+      } catch (error) {
+        console.error(`❌ World setup failed: ${error.message}`);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Start Minecraft server service
     app.post('/api/servers/:vmid/minecraft/start', verifyToken, async (req, res) => {
       try {
