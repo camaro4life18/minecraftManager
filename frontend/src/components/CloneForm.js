@@ -104,11 +104,15 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
       return;
     }
 
+    let requestProgressInterval = null;
+
     try {
       setLoading(true);
       setError(null);
       setConsoleLogs(['🚀 Starting clone operation...']);
       setShowConsole(true);
+      setCloneProgress(1);
+      setCloneStep('starting_clone');
 
       const seed = formData.seedOption === 'random' ? 'random' : formData.customSeed.trim();
 
@@ -142,6 +146,10 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
       if (formData.targetStorage) addLog(`💾 Target Storage: ${formData.targetStorage}`);
       addLog('⏳ Sending clone request...');
 
+      requestProgressInterval = setInterval(() => {
+        setCloneProgress(prev => (prev < 90 ? prev + 1 : prev));
+      }, 1500);
+
       const response = await fetch(`${apiBase}/api/servers/clone`, {
         method: 'POST',
         headers: {
@@ -160,6 +168,10 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
       const result = await response.json();
       const seedDisplay = result.seed || seed;
       const newVmId = result.vmid || result.newVmId;
+
+      if (requestProgressInterval) {
+        clearInterval(requestProgressInterval);
+      }
       
       setClonedVmId(newVmId);
       addLog(`✅ Clone initiated!`);
@@ -170,6 +182,9 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
       // Start polling for clone progress
       pollCloneProgress(newVmId, addLog);
     } catch (err) {
+      if (requestProgressInterval) {
+        clearInterval(requestProgressInterval);
+      }
       setError(err.message);
       setConsoleLogs(prev => [...prev, `❌ Error: ${err.message}`]);
       setLoading(false);
@@ -178,6 +193,8 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
 
   // Poll for clone progress
   const pollCloneProgress = async (vmid, addLog) => {
+    let pollStopped = false;
+
     const pollInterval = setInterval(async () => {
       try {
         const response = await fetch(`${apiBase}/api/servers/${vmid}/clone-status`, {
@@ -202,6 +219,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
           // Check if complete or failed
           if (status.status === 'completed') {
             clearInterval(pollInterval);
+            pollStopped = true;
             addLog('✨ Clone completed successfully!');
             setCloneProgress(100);
             setLoading(false);
@@ -211,6 +229,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
             }, 1500);
           } else if (status.status === 'failed') {
             clearInterval(pollInterval);
+            pollStopped = true;
             addLog(`❌ Clone failed: ${status.error_message || 'Unknown error'}`);
             setError(status.error_message || 'Clone failed');
             setLoading(false);
@@ -224,7 +243,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
     // Clear interval after 10 minutes max
     setTimeout(() => {
       clearInterval(pollInterval);
-      if (loading) {
+      if (!pollStopped) {
         addLog('⚠️ Clone monitoring timed out. Check status manually.');
         setLoading(false);
       }
