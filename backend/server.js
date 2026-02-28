@@ -1464,31 +1464,6 @@ async function startServer() {
           }
         }
         
-        // If targetNode was specified, migrate the cloned VM to that node
-        if (targetNode) {
-          try {
-            console.log(`🔄 Starting migration of VM ${assignedVmId} to node ${targetNode}...`);
-            const sourceVmDetails = await cloneProxmox.getServerDetails(sourceVmId);
-            const sourceNode = sourceVmDetails.node;
-            
-            if (targetNode !== sourceNode) {
-              console.log(`📍 Source node: ${sourceNode}, Target node: ${targetNode}`);
-              const migrationResult = await cloneProxmox.migrateServer(assignedVmId, targetNode);
-              console.log(`✓ Migration requested with UPID: ${migrationResult.upid}`);
-              
-              // Note: Migration happens asynchronously. The DHCP setup will proceed
-              // while migration completes in the background. This is fine since the 
-              // VM is being configured with the new IP regardless of node location.
-            } else {
-              console.log(`ℹ️  VM already on target node ${targetNode}, no migration needed`);
-            }
-          } catch (migrationError) {
-            console.warn(`⚠️  Warning - VM migration failed (clone succeeded): ${migrationError.message}`);
-            // Don't fail the entire clone operation if migration fails
-            // The VM was cloned successfully, just not on the target node
-          }
-        }
-        
         // Log the action and track as managed server with seed
         await ServerCloneLog.create(req.user.userId, sourceVmId, assignedVmId, newVmName, 'pending');
         await ManagedServer.create(assignedVmId, req.user.userId, newVmName, serverSeed);
@@ -1633,6 +1608,75 @@ async function startServer() {
         
         if (!vmReady) {
           console.warn(`⚠️  VM status not confirmed after ${maxWaitAttempts} seconds. Proceeding anyway...`);
+        }
+        
+        // If targetNode was specified, migrate the cloned VM to that node BEFORE starting
+        if (targetNode) {
+          try {
+            console.log(`🔄 Preparing to migrate VM ${assignedVmId} to node ${targetNode}...`);
+            
+            // Wait for VM lock to be released (clone operations lock the VM)
+            let lockCleared = false;
+            let lockAttempts = 0;
+            const maxLockAttempts = 30; // 30 seconds to wait for lock
+            
+            while (!lockCleared && lockAttempts < maxLockAttempts) {
+              try {
+                const vmDetails = await cloneProxmox.getServerDetails(assignedVmId);
+                const isLocked = vmDetails.status.lock;
+                
+                if (!isLocked) {
+                  lockCleared = true;
+                  console.log(`✅ VM lock cleared after ${lockAttempts} second(s)`);
+                } else {
+                  lockAttempts++;
+                  if (lockAttempts < maxLockAttempts) {
+                    console.log(`⏳ VM is locked (${isLocked}), waiting... (${lockAttempts}/${maxLockAttempts})`);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                  }
+                }
+              } catch (err) {
+                lockAttempts++;
+                if (lockAttempts < maxLockAttempts) {
+                  console.log(`⏳ Checking VM lock... (${lockAttempts}/${maxLockAttempts})`);
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+              }
+            }
+            
+            if (!lockCleared) {
+              console.warn(`⚠️  VM lock did not clear after ${maxLockAttempts} seconds, attempting migration anyway...`);
+            }
+            
+            // Now attempt migration
+            const sourceVmDetails = await cloneProxmox.getServerDetails(assignedVmId);
+            const currentNode = sourceVmDetails.node;
+            
+            if (targetNode !== currentNode) {
+              console.log(`📍 Current node: ${currentNode}, Target node: ${targetNode}`);
+              console.log(`🚀 Migrating VM ${assignedVmId} from ${currentNode} to ${targetNode}...`);
+              
+              const migrationResult = await cloneProxmox.migrateServer(assignedVmId, targetNode);
+              console.log(`✓ Migration initiated with UPID: ${migrationResult.upid}`);
+              
+              // Wait for migration to complete before starting
+              console.log(`⏳ Waiting for migration to complete...`);
+              const migrationSuccess = await cloneProxmox.waitForTask(migrationResult.upid, 300);
+              
+              if (migrationSuccess) {
+                console.log(`✅ VM ${assignedVmId} successfully migrated to ${targetNode}`);
+              } else {
+                console.warn(`⚠️  Migration task completed with warnings or timed out`);
+              }
+            } else {
+              console.log(`ℹ️  VM already on target node ${targetNode}, no migration needed`);
+            }
+          } catch (migrationError) {
+            console.warn(`⚠️  Migration failed: ${migrationError.message}`);
+            console.warn(`⚠️  VM will remain on current node. Starting VM anyway...`);
+            // Don't fail the entire clone operation if migration fails
+            // The VM was cloned successfully, just not on the target node
+          }
         }
         
         try {
