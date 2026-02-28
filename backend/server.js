@@ -1739,6 +1739,11 @@ async function startServer() {
                     privateKey: sshConfig.ssh_private_key
                   });
 
+                  // Test SSH connection with a simple command first
+                  console.log(`🔍 Testing SSH connection (attempt ${retryCount + 1}/${maxRetries})...`);
+                  const testResult = await ssh.exec('echo "SSH connection test"');
+                  console.log(`✅ SSH connection successful!`);
+
                   const manager = new MinecraftServerManager(
                     ssh,
                     sshConfig.minecraft_path,
@@ -1760,7 +1765,7 @@ async function startServer() {
                     console.log(`   Retrying in ${retryInterval}s...`);
                     await new Promise(resolve => setTimeout(resolve, retryInterval * 1000));
                   } else {
-                    console.error(`❌ SSH failed after ${maxRetries} attempts`);
+                    console.error(`❌ SSH failed after ${maxRetries} attempts: ${sshError.message}`);
                     throw sshError;
                   }
                 }
