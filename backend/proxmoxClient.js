@@ -430,29 +430,43 @@ class ProxmoxClient {
 
   // Wait for a Proxmox task (UPID) to complete
   async waitForTask(upid, maxWaitSeconds = 300) {
+    if (!this.token) {
+      await this.authenticate();
+    }
+
+    if (!upid || typeof upid !== 'string') {
+      throw new Error('waitForTask requires a valid UPID string');
+    }
+
+    const parts = upid.split(':');
+    const node = parts[1];
+    if (!node) {
+      throw new Error(`Could not parse node from UPID: ${upid}`);
+    }
+
+    const encodedUpid = encodeURIComponent(upid);
     const startTime = Date.now();
     const maxWaitMs = maxWaitSeconds * 1000;
 
     while (Date.now() - startTime < maxWaitMs) {
       try {
-        const response = await this.api.get(`/nodes/${upid.split(':')[1]}/tasks/${upid.split(':')[4]}`);
+        const response = await this.api.get(`/nodes/${node}/tasks/${encodedUpid}/status`);
         const task = response.data.data;
 
         if (task.status === 'stopped') {
           if (task.exitstatus === 'OK') {
             console.log(`✓ Task ${upid} completed successfully`);
             return true;
-          } else {
-            console.error(`❌ Task ${upid} failed: ${task.exitstatus}`);
-            return false;
           }
+
+          console.error(`❌ Task ${upid} failed: ${task.exitstatus || 'unknown'}`);
+          return false;
         }
 
-        // Task still running, wait a bit
         await new Promise(resolve => setTimeout(resolve, 2000));
       } catch (error) {
-        // If we can't get task status, assume it's still running or completed
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.error(`Error waiting for task: ${error.message}`);
+        throw new Error(`Failed to get task status: ${error.message}`);
       }
     }
 
@@ -514,52 +528,6 @@ class ProxmoxClient {
     }
   }
 
-  // Get task status
-  async waitForTask(taskId, node, maxWaitSeconds = 60) {
-    if (!this.token) {
-      await this.authenticate();
-    }
-
-    const startTime = Date.now();
-    const maxWaitMs = maxWaitSeconds * 1000;
-
-    while (Date.now() - startTime < maxWaitMs) {
-      try {
-        const status = await this.getTaskStatus(taskId);
-        
-        // Check if task is finished
-        if (status.status === 'stopped') {
-          if (status.exitstatus === 'OK') {
-            console.log(`✅ Task ${taskId} completed successfully`);
-            return status;
-          } else {
-            throw new Error(`Task failed with status: ${status.exitstatus}`);
-          }
-        }
-
-        // Task still running, wait before polling again
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2 seconds
-      } catch (error) {
-        console.error(`Error waiting for task: ${error.message}`);
-        throw error;
-      }
-    }
-
-    throw new Error(`Task ${taskId} did not complete within ${maxWaitSeconds} seconds`);
-  }
-
-  async getTaskStatus(taskId) {
-    if (!this.token) {
-      await this.authenticate();
-    }
-
-    try {
-      const response = await this.api.get(`/cluster/tasks/${taskId}`);
-      return response.data.data;
-    } catch (error) {
-      throw new Error(`Failed to get task status: ${error.message}`);
-    }
-  }
 }
 
 export default ProxmoxClient;

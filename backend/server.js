@@ -1752,7 +1752,7 @@ async function startServer() {
               }
             }
           } catch (worldError) {
-            console.error(`⚠️  Failed to setup fresh world after ${maxRetries} attempts:`, worldError.message);
+            console.error(`⚠️  Failed to setup fresh world after SSH retries:`, worldError.message);
             // Don't fail the entire clone operation if world setup fails
             // User can always manually configure later
           }
