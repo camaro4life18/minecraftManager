@@ -1,25 +1,45 @@
-import axios from 'axios';
+import SSHClient from './sshClient.js';
 import dotenv from 'dotenv';
+import fs from 'fs';
 
 dotenv.config();
 
 class VelocityClient {
   constructor(config = {}) {
-    // Allow override of configuration
+    // SSH connection details for Velocity server
     this.host = config.host || process.env.VELOCITY_HOST;
-    this.port = config.port || process.env.VELOCITY_PORT || 8233;
-    this.apiKeyOrPassword = config.apiKey || process.env.VELOCITY_API_KEY || process.env.VELOCITY_PASSWORD;
-    this.baseUrl = `http://${this.host}:${this.port}`;
+    this.port = config.port || process.env.VELOCITY_SSH_PORT || 22;
+    this.username = config.username || process.env.VELOCITY_SSH_USER || 'joseph';
+    this.privateKeyPath = config.privateKeyPath || process.env.VELOCITY_SSH_KEY || '/root/.ssh/id_rsa';
+    this.velocityConfigPath = config.configPath || process.env.VELOCITY_CONFIG_PATH || '/opt/velocity-proxy/velocity.toml';
+    this.velocityServiceName = config.serviceName || process.env.VELOCITY_SERVICE_NAME || 'velocity';
   }
 
   isConfigured() {
-    return !!(this.host && this.apiKeyOrPassword);
+    return !!(this.host);
   }
 
   /**
-   * Add a server to the Velocity server list
-   * This typically requires SSH access to the velocity server to edit the config
-   * Or using an admin API if available
+   * Get SSH client for Velocity server
+   */
+  _getSSHClient() {
+    let privateKey;
+    try {
+      privateKey = fs.readFileSync(this.privateKeyPath, 'utf8');
+    } catch (error) {
+      throw new Error(`Cannot read SSH private key at ${this.privateKeyPath}: ${error.message}`);
+    }
+
+    return new SSHClient({
+      host: this.host,
+      port: this.port,
+      username: this.username,
+      privateKey: privateKey
+    });
+  }
+
+  /**
+   * Add a server to the Velocity server list by editing velocity.toml
    */
   async addServer(minecraftServerName, minecraftServerIp, minecraftServerPort = 25565) {
     if (!this.isConfigured()) {
@@ -28,41 +48,48 @@ class VelocityClient {
     }
 
     try {
-      // This is a placeholder for velocity server API calls
-      // In reality, you might need to:
-      // 1. SSH into the velocity server
-      // 2. Update the config file directly
-      // 3. Use a custom webhook/API endpoint on velocity
-
       console.log(`📋 Adding to Velocity: ${minecraftServerName} -> ${minecraftServerIp}:${minecraftServerPort}`);
 
-      // Example using HTTP API if velocity has one
-      const response = await axios.post(
-        `${this.baseUrl}/api/servers`,
-        {
-          name: minecraftServerName,
-          address: `${minecraftServerIp}:${minecraftServerPort}`
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.apiKeyOrPassword}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 5000
-        }
-      );
+      const ssh = this._getSSHClient();
+      
+      // Create backup of velocity.toml
+      await ssh.executeCommand(`sudo cp ${this.velocityConfigPath} ${this.velocityConfigPath}.backup`);
 
-      console.log('✓ Server added to Velocity');
-      return { success: true, data: response.data };
+      // Check if server already exists in config
+      const checkResult = await ssh.executeCommand(`grep -q "^${minecraftServerName} =" ${this.velocityConfigPath} && echo "EXISTS" || echo "NOT_EXISTS"`);
+      const exists = checkResult.stdout.trim() === 'EXISTS';
+
+      if (exists) {
+        // Update existing entry using sed
+        const sedCmd = `sudo sed -i 's|^${minecraftServerName} =.*|${minecraftServerName} = "${minecraftServerIp}:${minecraftServerPort}"|' ${this.velocityConfigPath}`;
+        await ssh.executeCommand(sedCmd);
+        console.log(`✓ Updated existing Velocity entry: ${minecraftServerName}`);
+      } else {
+        // Add new entry in [servers] section - insert after the [servers] line
+        const addCmd = `sudo sed -i '/^\\[servers\\]/a ${minecraftServerName} = "${minecraftServerIp}:${minecraftServerPort}"' ${this.velocityConfigPath}`;
+        await ssh.executeCommand(addCmd);
+        console.log(`✓ Added new Velocity entry: ${minecraftServerName}`);
+      }
+
+      // Reload Velocity proxy by restarting the service
+      console.log('🔄 Reloading Velocity proxy...');
+      const restartResult = await ssh.executeCommand(`sudo systemctl restart ${this.velocityServiceName}`);
+      
+      if (restartResult.code === 0) {
+        console.log('✓ Velocity proxy reloaded successfully');
+        return { success: true, message: 'Server added and Velocity reloaded' };
+      } else {
+        console.warn('⚠️  Velocity restart returned non-zero code, but server was added to config');
+        return { success: true, message: 'Server added to config, restart may need verification' };
+      }
     } catch (error) {
-      // Log the error but don't fail the whole clone operation
-      console.error('⚠️  Velocity server error:', error.message);
+      console.error('⚠️  Velocity configuration error:', error.message);
       
       // Return partial success - the VM was cloned even if velocity wasn't updated
       return {
         success: false,
         message: `Could not update velocity: ${error.message}`,
-        partialSuccess: true // Indicate that the VM clone succeeded
+        partialSuccess: true
       };
     }
   }
@@ -76,15 +103,20 @@ class VelocityClient {
     }
 
     try {
-      const response = await axios.delete(
-        `${this.baseUrl}/api/servers/${minecraftServerName}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.apiKeyOrPassword}`
-          },
-          timeout: 5000
-        }
-      );
+      console.log(`🗑️  Removing from Velocity: ${minecraftServerName}`);
+
+      const ssh = this._getSSHClient();
+
+      // Create backup
+      await ssh.executeCommand(`sudo cp ${this.velocityConfigPath} ${this.velocityConfigPath}.backup`);
+
+      // Remove server entry using sed
+      const removeCmd = `sudo sed -i '/^${minecraftServerName} =/d' ${this.velocityConfigPath}`;
+      await ssh.executeCommand(removeCmd);
+
+      // Reload Velocity
+      console.log('🔄 Reloading Velocity proxy...');
+      await ssh.executeCommand(`sudo systemctl restart ${this.velocityServiceName}`);
 
       console.log(`✓ Server removed from Velocity: ${minecraftServerName}`);
       return { success: true };
@@ -95,7 +127,7 @@ class VelocityClient {
   }
 
   /**
-   * Get list of servers from Velocity
+   * Get list of servers from Velocity config
    */
   async listServers() {
     if (!this.isConfigured()) {
@@ -103,17 +135,26 @@ class VelocityClient {
     }
 
     try {
-      const response = await axios.get(
-        `${this.baseUrl}/api/servers`,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.apiKeyOrPassword}`
-          },
-          timeout: 5000
-        }
-      );
+      const ssh = this._getSSHClient();
+      
+      // Extract server entries from [servers] section
+      const listCmd = `awk '/^\\[servers\\]/,/^\\[/ {if ($0 ~ /^[a-zA-Z0-9_-]+ =/) print}' ${this.velocityConfigPath}`;
+      const result = await ssh.executeCommand(listCmd);
 
-      return { servers: response.data };
+      const servers = [];
+      const lines = result.stdout.trim().split('\n');
+      
+      for (const line of lines) {
+        const match = line.match(/^([a-zA-Z0-9_-]+)\s*=\s*"([^"]+)"/);
+        if (match) {
+          servers.push({
+            name: match[1],
+            address: match[2]
+          });
+        }
+      }
+
+      return { servers };
     } catch (error) {
       console.error('⚠️  Error fetching Velocity servers:', error.message);
       return { servers: [] };

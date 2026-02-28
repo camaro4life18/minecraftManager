@@ -40,6 +40,12 @@ services:
       - PROXMOX_REALM=${PROXMOX_REALM:-pam}
       - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
       - ROUTER_SERVICE_URL=${ROUTER_SERVICE_URL:-http://localhost:7001}
+      - VELOCITY_HOST=${VELOCITY_HOST}
+      - VELOCITY_SSH_PORT=${VELOCITY_SSH_PORT:-22}
+      - VELOCITY_SSH_USER=${VELOCITY_SSH_USER:-joseph}
+      - VELOCITY_SSH_KEY=${VELOCITY_SSH_KEY:-/root/.ssh/id_rsa}
+      - VELOCITY_CONFIG_PATH=${VELOCITY_CONFIG_PATH:-/opt/velocity-proxy/velocity.toml}
+      - VELOCITY_SERVICE_NAME=${VELOCITY_SERVICE_NAME:-velocity}
     depends_on:
       postgres:
         condition: service_healthy
