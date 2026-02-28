@@ -1369,7 +1369,9 @@ async function startServer() {
             const encodedUpid = encodeURIComponent(result.upid);
             let cloneTaskComplete = false;
             let waitAttempts = 0;
-            const maxWaitAttempts = 120; // 2 minutes max of 1-second checks
+            const pollIntervalMs = 2000; // 2-second checks
+            const maxWaitMs = 20 * 60 * 1000; // 20 minutes total wait for large full clones
+            const maxWaitAttempts = Math.ceil(maxWaitMs / pollIntervalMs);
             let lastKnownPercent = 2;
 
             while (!cloneTaskComplete && waitAttempts < maxWaitAttempts) {
@@ -1446,18 +1448,31 @@ async function startServer() {
                     });
                     console.log(`⏳ Clone in progress... (attempt ${waitAttempts + 1}/${maxWaitAttempts})`);
                   }
-                  await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+                  await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
                 }
               } catch (taskError) {
                 // If we can't query the task, assume it's still running
                 console.log(`⏳ Checking clone status... (attempt ${waitAttempts + 1}/${maxWaitAttempts})`);
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
               }
               waitAttempts++;
             }
 
             if (!cloneTaskComplete) {
-              console.warn(`⚠️  Clone task did not complete within ${maxWaitAttempts} seconds, proceeding with MAC lookup...`);
+              const waitedMinutes = Math.round((maxWaitAttempts * pollIntervalMs) / 60000);
+              console.warn(`⚠️  Clone task did not complete within ${waitedMinutes} minutes. Aborting workflow to avoid acting on a partially cloned VM.`);
+              setLiveCloneProgress(clientRequestId, {
+                userId: req.user.userId,
+                status: 'failed',
+                currentStep: 'cloning',
+                progressPercent: lastKnownPercent,
+                message: `Clone did not complete within ${waitedMinutes} minutes. Please retry.`
+              });
+              return res.status(504).json({
+                error: `Clone task did not complete within ${waitedMinutes} minutes. VM is likely still cloning in Proxmox.`,
+                vmid: assignedVmId,
+                canRetry: true
+              });
             }
           } catch (waitError) {
             console.warn(`⚠️  Could not wait for clone task, proceeding anyway: ${waitError.message}`);
