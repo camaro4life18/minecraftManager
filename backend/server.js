@@ -1722,7 +1722,7 @@ async function startServer() {
               // Update SSH config in database with the actual IP
               try {
                 await pool.query(
-                  'UPDATE managed_servers SET ssh_host = $1 WHERE vm_id = $2',
+                  'UPDATE managed_servers SET ssh_host = $1 WHERE vmid = $2',
                   [guestInfo.ip, assignedVmId]
                 );
                 console.log(`✅ Updated SSH config in database with guest agent IP: ${guestInfo.ip}`);
@@ -2543,7 +2543,7 @@ async function startServer() {
             const server = await ManagedServer.findById(vmid);
             if (server) {
               await pool.query(
-                'UPDATE managed_servers SET ssh_host = $1 WHERE vm_id = $2',
+                'UPDATE managed_servers SET ssh_host = $1 WHERE vmid = $2',
                 [ip, vmid]
               );
               console.log(`✅ Updated SSH config in database for VM ${vmid} with IP ${ip}`);
