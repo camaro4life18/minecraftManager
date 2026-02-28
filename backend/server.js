@@ -1785,6 +1785,17 @@ async function startServer() {
                   if (worldSetupResult.success) {
                     console.log(`✅ World setup successful for VM ${assignedVmId} after ${retryCount + 1} attempt(s)`);
                     
+                    // Restart the minecraft service to start with fresh world
+                    console.log(`🔄 Restarting minecraft.service with new world...`);
+                    try {
+                      await ssh.executeCommand('sudo -n systemctl restart minecraft.service');
+                      console.log(`✅ Service restart command sent`);
+                      // Wait a moment for service to start
+                      await new Promise(resolve => setTimeout(resolve, 3000));
+                    } catch (restartError) {
+                      console.warn(`⚠️  Service restart failed: ${restartError.message}`);
+                    }
+                    
                     // Check minecraft.service status
                     try {
                       console.log(`🔍 Checking minecraft.service status...`);
@@ -2516,6 +2527,17 @@ async function startServer() {
 
         if (result.success) {
           console.log(`✅ World setup successful for VM ${vmid}`);
+          
+          // Restart the minecraft service to start with fresh world
+          console.log(`🔄 Restarting minecraft.service with new world...`);
+          try {
+            await ssh.executeCommand('sudo -n systemctl restart minecraft.service');
+            console.log(`✅ Service restart command sent`);
+            // Wait a moment for service to start
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          } catch (restartError) {
+            console.warn(`⚠️  Service restart failed: ${restartError.message}`);
+          }
           
           // Check minecraft.service status
           try {
