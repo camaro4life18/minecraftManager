@@ -1882,7 +1882,6 @@ async function startServer() {
                     console.error(`❌ SSH failed after ${maxRetries} attempts: ${sshError.message}`);
                     throw sshError;
                   }
-                  }
                 }
               }
             }
