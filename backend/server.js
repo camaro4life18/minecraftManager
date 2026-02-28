@@ -2468,15 +2468,74 @@ async function startServer() {
 
     // Start Minecraft server service
     app.post('/api/servers/:vmid/minecraft/start', verifyToken, async (req, res) => {
-      try {
-        const vmid = parseInt(req.params.vmid);
-        const manager = await getMinecraftManager(vmid);
-        const success = await manager.start();
-        res.json({ success });
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
+        try {
+          const vmid = parseInt(req.params.vmid);
+          const manager = await getMinecraftManager(vmid);
+          const success = await manager.start();
+          res.json({ success });
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      });
+
+      // Install QEMU guest agent on VM (for Proxmox IP reporting)
+      app.post('/api/servers/:vmid/system/install-qemu-agent', verifyToken, requireAdmin, async (req, res) => {
+        try {
+          const vmid = parseInt(req.params.vmid);
+          const { ip, port = 22, username = 'joseph', privateKey } = req.body;
+
+          if (!ip || !privateKey) {
+            return res.status(400).json({ 
+              error: 'Missing required fields: ip, privateKey' 
+            });
+          }
+
+          console.log(`🔧 Installing QEMU guest agent on VM ${vmid} (${ip})...`);
+          const ssh = new SSHClient({ host: ip, port, username, privateKey });
+
+          // Test connection first
+          try {
+            await ssh.executeCommand('echo "SSH connection test"');
+          } catch (e) {
+            console.error(`❌ SSH connection failed to ${ip}`);
+            return res.status(500).json({ error: `SSH connection failed: ${e.message}` });
+          }
+
+          // Install and enable QEMU guest agent
+          console.log(`📦 Installing package on ${ip}...`);
+          const result = await ssh.executeCommand(
+            'sudo apt-get update && sudo apt-get install -y qemu-guest-agent && sudo systemctl enable qemu-guest-agent && sudo systemctl restart qemu-guest-agent && echo "QEMU_AGENT_INSTALLED"'
+          );
+
+          console.log(`✅ QEMU guest agent installation output: ${result}`);
+
+          // Update database with the correct SSH config
+          try {
+            const server = await ManagedServer.findById(vmid);
+            if (server) {
+              await pool.query(
+                'UPDATE ssh_configs SET ssh_host = $1 WHERE vm_id = $2',
+                [ip, vmid]
+              );
+              console.log(`✅ Updated SSH config in database for VM ${vmid} with IP ${ip}`);
+            }
+          } catch (dbError) {
+            console.warn(`⚠️  Database update failed: ${dbError.message}`);
+            // Don't fail the request - agent install was successful
+          }
+
+          res.json({
+            success: true,
+            message: 'QEMU guest agent installed successfully',
+            vm: vmid,
+            ip: ip,
+            note: 'VM IP updated in database. Guest agent will report IP to Proxmox automatically.'
+          });
+        } catch (error) {
+          console.error(`❌ Failed to install QEMU guest agent: ${error.message}`);
+          res.status(500).json({ error: error.message });
+        }
+      });
 
     // Stop Minecraft server service
     app.post('/api/servers/:vmid/minecraft/stop', verifyToken, async (req, res) => {
