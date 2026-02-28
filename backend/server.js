@@ -1854,27 +1854,34 @@ async function startServer() {
         }
 
         // Try to add to Velocity server list (optional - won't fail clone if it fails)
-        // Note: This assumes the new server IP will be on the Proxmox local network
-        // You may need to adjust the IP or add additional configuration
+        // Use the SSH host from database (which has the guest agent detected IP)
         let velocityResult = null;
-        if (velocity.isConfigured() && assignedVmId && targetIp) {
-          const serverIp = targetIp;
-          
-          console.log(`🎮 Adding to Velocity: ${domainName} → ${serverIp}:25565`);
-          
-          velocityResult = await velocity.addServer(
-            domainName,
-            serverIp,
-            25565
-          );
-          
-          if (velocityResult.success) {
-            console.log(`✅ Added to Velocity proxy successfully`);
-          } else {
-            console.warn(`⚠️  Could not fully configure velocity, but VM clone succeeded: ${velocityResult.message}`);
+        if (velocity.isConfigured() && assignedVmId) {
+          try {
+            // Get the actual SSH host (with guest agent IP if available)
+            const sshConfig = await ManagedServer.getSSHConfig(assignedVmId);
+            if (sshConfig && sshConfig.ssh_host) {
+              const serverIp = sshConfig.ssh_host;
+              
+              console.log(`🎮 Adding to Velocity: ${domainName} → ${serverIp}:25565`);
+              
+              velocityResult = await velocity.addServer(
+                domainName,
+                serverIp,
+                25565
+              );
+              
+              if (velocityResult.success) {
+                console.log(`✅ Added to Velocity proxy successfully`);
+              } else {
+                console.warn(`⚠️  Could not fully configure velocity, but VM clone succeeded: ${velocityResult.message}`);
+              }
+            } else {
+              console.log('⚠️  Could not get SSH config for Velocity registration');
+            }
+          } catch (velocityError) {
+            console.warn(`⚠️  Error during Velocity registration: ${velocityError.message}`);
           }
-        } else if (velocity.isConfigured() && assignedVmId && !targetIp) {
-          console.log('⚠️  Skipping Velocity registration because DHCP is disabled and no target IP is available.');
         }
 
         // Mark clone as completed
