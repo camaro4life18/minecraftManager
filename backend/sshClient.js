@@ -519,12 +519,22 @@ export class MinecraftServerManager {
     try {
       console.log(`🌍 Setting up fresh world with seed: ${seed}`);
       
-      // Step 1: Stop the server if running
-      console.log('🛑 Stopping Minecraft server...');
+      // Step 1: Force-stop the server if running (since we're deleting world anyway)
+      console.log('🛑 Force-stopping Minecraft server...');
+      const killResult = await this.ssh.executeCommand('sudo -n killall -9 java 2>/dev/null || true');
+      if (killResult && killResult.stderr && !killResult.stderr.includes('no process killed')) {
+        console.log(`   Kill result: ${killResult.stderr.trim() || 'No process found'}`);
+      }
+      
+      // Give it a moment for the process to be killed
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Step 2: Stop the systemd service to clean up the service state
+      console.log('🛑 Stopping minecraft.service...');
       const stopResult = await this.runSystemctl('stop');
-      if (stopResult.code !== 0 && !stopResult.stderr.includes('not loaded')) {
+      if (stopResult.code !== 0 && !stopResult.stderr.includes('not loaded') && !stopResult.stderr.includes('not active')) {
         console.warn('⚠️  Stop command returned non-zero:', stopResult.stderr);
-        // Continue anyway - server might not be running
+        // Continue anyway - we already killed the process
       }
 
       // Step 2: Delete world directories
