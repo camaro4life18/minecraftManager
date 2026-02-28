@@ -136,6 +136,30 @@ async function startServer() {
       limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
     });
 
+    // Helper function to get Velocity client with current configuration
+    async function getVelocityClient() {
+      const host = await AppConfig.get('velocity_host');
+      if (!host) {
+        // Return unconfigured client
+        return new VelocityClient();
+      }
+      
+      const sshPort = await AppConfig.get('velocity_ssh_port');
+      const sshUser = await AppConfig.get('velocity_ssh_user');
+      const sshKeyPath = await AppConfig.get('velocity_ssh_key');
+      const configPath = await AppConfig.get('velocity_config_path');
+      const serviceName = await AppConfig.get('velocity_service_name');
+      
+      return new VelocityClient({
+        host,
+        port: sshPort ? parseInt(sshPort) : undefined,
+        username: sshUser,
+        privateKeyPath: sshKeyPath,
+        configPath,
+        serviceName
+      });
+    }
+
     // ============================================
     // API DOCUMENTATION
     // ============================================
@@ -574,9 +598,12 @@ async function startServer() {
         }
 
         if (velocity) {
-          if (velocity.host) await AppConfig.set('velocity_host', velocity.host, req.user.userId, 'Velocity server hostname');
-          if (velocity.port) await AppConfig.set('velocity_port', velocity.port.toString(), req.user.userId, 'Velocity server port');
-          if (velocity.apiKey) await AppConfig.set('velocity_api_key', velocity.apiKey, req.user.userId, 'Velocity API key', 'password');
+          if (velocity.host) await AppConfig.set('velocity_host', velocity.host, req.user.userId, 'Velocity server hostname or IP');
+          if (velocity.sshPort) await AppConfig.set('velocity_ssh_port', velocity.sshPort.toString(), req.user.userId, 'Velocity SSH port');
+          if (velocity.sshUser) await AppConfig.set('velocity_ssh_user', velocity.sshUser, req.user.userId, 'Velocity SSH username');
+          if (velocity.sshKeyPath) await AppConfig.set('velocity_ssh_key', velocity.sshKeyPath, req.user.userId, 'Velocity SSH private key path');
+          if (velocity.configPath) await AppConfig.set('velocity_config_path', velocity.configPath, req.user.userId, 'Velocity config file path');
+          if (velocity.serviceName) await AppConfig.set('velocity_service_name', velocity.serviceName, req.user.userId, 'Velocity systemd service name');
           if (velocity.backendNetwork) await AppConfig.set('velocity_backend_network', velocity.backendNetwork, req.user.userId, 'Velocity backend network range');
         }
 
@@ -635,23 +662,31 @@ async function startServer() {
     // Test Velocity connection
     app.post('/api/admin/config/test-velocity', verifyToken, requireAdmin, async (req, res) => {
       try {
-        const { host, port, apiKey } = req.body;
+        const { host, sshPort, sshUser, sshKeyPath, configPath, serviceName } = req.body;
 
-        if (!host || !port || !apiKey) {
+        if (!host) {
           return res.status(400).json({ 
             success: false, 
-            error: 'Velocity host, port, and API key are required' 
+            error: 'Velocity host is required' 
           });
         }
 
         try {
           // Create a temporary Velocity client to test connection
-          const testVelocity = new VelocityClient({ host, port, apiKey });
-          await testVelocity.listServers();
+          const testVelocity = new VelocityClient({ 
+            host, 
+            port: sshPort || 22,
+            username: sshUser || 'joseph',
+            privateKeyPath: sshKeyPath || '/root/.ssh/id_rsa',
+            configPath: configPath || '/opt/velocity-proxy/velocity.toml',
+            serviceName: serviceName || 'velocity'
+          });
+          const result = await testVelocity.listServers();
           
           res.json({ 
             success: true, 
-            message: 'Connection successful'
+            message: `Connection successful. Found ${result.servers.length} server(s) in config.`,
+            servers: result.servers
           });
         } catch (error) {
           res.json({ 
@@ -1906,6 +1941,10 @@ async function startServer() {
           progressPercent: 90,
           message: 'Registering with Velocity proxy...'
         });
+        
+        // Get current Velocity configuration from AppConfig
+        const velocity = await getVelocityClient();
+        
         if (velocity.isConfigured() && assignedVmId) {
           try {
             // Get the actual SSH host (with guest agent IP if available)
@@ -2294,6 +2333,7 @@ async function startServer() {
         await ManagedServer.delete(vmid);
 
         // Remove from Velocity server list if configured
+        const velocity = await getVelocityClient();
         if (velocity.isConfigured() && serverName) {
           const velocityResult = await velocity.removeServer(serverName);
           if (!velocityResult.success) {

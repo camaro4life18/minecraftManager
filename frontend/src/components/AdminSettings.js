@@ -11,8 +11,11 @@ function AdminSettings({ apiBase, token, isAdmin }) {
 
   const [velocity, setVelocity] = useState({
     host: '',
-    port: 8233,
-    apiKey: '',
+    sshPort: 22,
+    sshUser: 'joseph',
+    sshKeyPath: '/root/.ssh/id_rsa',
+    configPath: '/opt/velocity-proxy/velocity.toml',
+    serviceName: 'velocity',
     backendNetwork: '192.168.1'
   });
 
@@ -33,7 +36,6 @@ function AdminSettings({ apiBase, token, isAdmin }) {
   const [proxmoxNodes, setProxmoxNodes] = useState([]);
   const [showPasswords, setShowPasswords] = useState({
     proxmoxPassword: false,
-    velocityApiKey: false,
     routerPassword: false
   });
   const [activeTab, setActiveTab] = useState('proxmox');
@@ -72,8 +74,11 @@ function AdminSettings({ apiBase, token, isAdmin }) {
         setVelocity(prev => ({
           ...prev,
           host: config.velocity_host?.value || '',
-          port: parseInt(config.velocity_port?.value || 8233),
-          apiKey: '',
+          sshPort: parseInt(config.velocity_ssh_port?.value || 22),
+          sshUser: config.velocity_ssh_user?.value || 'joseph',
+          sshKeyPath: config.velocity_ssh_key?.value || '/root/.ssh/id_rsa',
+          configPath: config.velocity_config_path?.value || '/opt/velocity-proxy/velocity.toml',
+          serviceName: config.velocity_service_name?.value || 'velocity',
           backendNetwork: config.velocity_backend_network?.value || '192.168.1'
         }));
       }
@@ -167,8 +172,11 @@ function AdminSettings({ apiBase, token, isAdmin }) {
         },
         body: JSON.stringify({
           host: velocity.host,
-          port: velocity.port,
-          apiKey: velocity.apiKey
+          sshPort: velocity.sshPort,
+          sshUser: velocity.sshUser,
+          sshKeyPath: velocity.sshKeyPath,
+          configPath: velocity.configPath,
+          serviceName: velocity.serviceName
         })
       });
 
@@ -274,8 +282,8 @@ function AdminSettings({ apiBase, token, isAdmin }) {
       setError(null);
       setSuccess(null);
 
-      if (!velocity.host || !velocity.port || !velocity.apiKey) {
-        setError('Velocity host, port, and API key are required');
+      if (!velocity.host) {
+        setError('Velocity host is required');
         setLoading(false);
         return;
       }
@@ -289,8 +297,11 @@ function AdminSettings({ apiBase, token, isAdmin }) {
         body: JSON.stringify({
           velocity: {
             host: velocity.host,
-            port: velocity.port,
-            apiKey: velocity.apiKey,
+            sshPort: velocity.sshPort,
+            sshUser: velocity.sshUser,
+            sshKeyPath: velocity.sshKeyPath,
+            configPath: velocity.configPath,
+            serviceName: velocity.serviceName,
             backendNetwork: velocity.backendNetwork
           }
         })
@@ -522,7 +533,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
           <div className="settings-section">
             <h3>Velocity Server Configuration (Optional)</h3>
             <p className="section-description">
-              Configure Velocity for automatic server list management. Leave blank to skip this integration.
+              Configure Velocity for automatic server list management via SSH. The system will edit velocity.toml and reload the proxy when servers are cloned. Leave blank to skip this integration.
             </p>
 
             <form className="settings-form">
@@ -541,43 +552,73 @@ function AdminSettings({ apiBase, token, isAdmin }) {
               </div>
 
               <div className="form-group">
-                <label htmlFor="velocity-port">Port:</label>
+                <label htmlFor="velocity-ssh-port">SSH Port:</label>
                 <input
                   type="number"
-                  id="velocity-port"
-                  name="port"
-                  value={velocity.port}
+                  id="velocity-ssh-port"
+                  name="sshPort"
+                  value={velocity.sshPort}
                   onChange={handleVelocityChange}
-                  placeholder="8233"
+                  placeholder="22"
                   disabled={loading}
                 />
-                <small>Velocity API server port (default: 8233)</small>
+                <small>SSH port for connecting to Velocity server (default: 22)</small>
               </div>
 
               <div className="form-group">
-                <label htmlFor="velocity-api-key">
-                  API Key:
-                  <button
-                    type="button"
-                    className="show-password-btn"
-                    onClick={() => setShowPasswords(prev => ({
-                      ...prev,
-                      velocityApiKey: !prev.velocityApiKey
-                    }))}
-                  >
-                    {showPasswords.velocityApiKey ? '🙈' : '👁️'}
-                  </button>
-                </label>
+                <label htmlFor="velocity-ssh-user">SSH Username:</label>
                 <input
-                  type={showPasswords.velocityApiKey ? 'text' : 'password'}
-                  id="velocity-api-key"
-                  name="apiKey"
-                  value={velocity.apiKey}
+                  type="text"
+                  id="velocity-ssh-user"
+                  name="sshUser"
+                  value={velocity.sshUser}
                   onChange={handleVelocityChange}
-                  placeholder="Your Velocity API key"
+                  placeholder="joseph"
                   disabled={loading}
                 />
-                <small>API key for authenticating with the Velocity server</small>
+                <small>SSH username for connecting to Velocity server</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="velocity-ssh-key">SSH Private Key Path:</label>
+                <input
+                  type="text"
+                  id="velocity-ssh-key"
+                  name="sshKeyPath"
+                  value={velocity.sshKeyPath}
+                  onChange={handleVelocityChange}
+                  placeholder="/root/.ssh/id_rsa"
+                  disabled={loading}
+                />
+                <small>Path to SSH private key on the backend container</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="velocity-config-path">Velocity Config Path:</label>
+                <input
+                  type="text"
+                  id="velocity-config-path"
+                  name="configPath"
+                  value={velocity.configPath}
+                  onChange={handleVelocityChange}
+                  placeholder="/opt/velocity-proxy/velocity.toml"
+                  disabled={loading}
+                />
+                <small>Path to velocity.toml on the Velocity server</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="velocity-service-name">Systemd Service Name:</label>
+                <input
+                  type="text"
+                  id="velocity-service-name"
+                  name="serviceName"
+                  value={velocity.serviceName}
+                  onChange={handleVelocityChange}
+                  placeholder="velocity"
+                  disabled={loading}
+                />
+                <small>Name of the systemd service to restart (e.g., velocity)</small>
               </div>
 
               <div className="form-group">
