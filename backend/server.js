@@ -1784,6 +1784,24 @@ async function startServer() {
                   
                   if (worldSetupResult.success) {
                     console.log(`✅ World setup successful for VM ${assignedVmId} after ${retryCount + 1} attempt(s)`);
+                    
+                    // Check minecraft.service status
+                    try {
+                      console.log(`🔍 Checking minecraft.service status...`);
+                      const serviceStatus = await ssh.executeCommand('systemctl status minecraft.service');
+                      console.log(`📊 Service status output:\n${serviceStatus}`);
+                      
+                      // Check if service is running
+                      if (serviceStatus.includes('active (running)')) {
+                        console.log(`✅ minecraft.service is running!`);
+                      } else if (serviceStatus.includes('inactive')) {
+                        console.warn(`⚠️  minecraft.service is inactive`);
+                      } else {
+                        console.warn(`⚠️  minecraft.service status unknown`);
+                      }
+                    } catch (serviceError) {
+                      console.warn(`⚠️  Could not check service status: ${serviceError.message}`);
+                    }
                   } else {
                     console.warn(`⚠️  World setup had issues: ${worldSetupResult.message}`);
                   }
@@ -2484,7 +2502,29 @@ async function startServer() {
 
         if (result.success) {
           console.log(`✅ World setup successful for VM ${vmid}`);
-          res.json({ success: true, seed: seedToUse, message: 'World setup completed successfully' });
+          
+          // Check minecraft.service status
+          try {
+            console.log(`🔍 Checking minecraft.service status...`);
+            const serviceStatus = await ssh.executeCommand('systemctl status minecraft.service');
+            console.log(`📊 Service status output:\n${serviceStatus}`);
+            
+            // Check if service is running
+            let serviceRunning = false;
+            if (serviceStatus.includes('active (running)')) {
+              console.log(`✅ minecraft.service is running!`);
+              serviceRunning = true;
+            } else if (serviceStatus.includes('inactive')) {
+              console.warn(`⚠️  minecraft.service is inactive`);
+            } else {
+              console.warn(`⚠️  minecraft.service status unknown`);
+            }
+            
+            res.json({ success: true, seed: seedToUse, serviceRunning, message: 'World setup completed successfully' });
+          } catch (serviceError) {
+            console.warn(`⚠️  Could not check service status: ${serviceError.message}`);
+            res.json({ success: true, seed: seedToUse, serviceRunning: null, message: 'World setup completed but could not verify service status' });
+          }
         } else {
           console.warn(`⚠️  World setup had issues: ${result.message}`);
           res.status(400).json({ success: false, message: result.message });
