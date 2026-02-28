@@ -1707,6 +1707,35 @@ async function startServer() {
           }
           
           console.log(`✅ VM ${assignedVmId} started successfully`);
+
+          // Try to get IP from QEMU guest agent (if installed)
+          try {
+            console.log(`🔍 Waiting for QEMU guest agent to start (30s)...`);
+            await new Promise(resolve => setTimeout(resolve, 30000)); // Wait 30 seconds for agent to start
+            
+            console.log(`🔍 Querying QEMU guest agent for IP address...`);
+            const guestInfo = await cloneProxmox.getGuestAgentIP(assignedVmId);
+            
+            if (guestInfo && guestInfo.ip) {
+              console.log(`✅ Guest agent reported IP: ${guestInfo.ip}`);
+              
+              // Update SSH config in database with the actual IP
+              try {
+                await pool.query(
+                  'UPDATE ssh_configs SET ssh_host = $1 WHERE vm_id = $2',
+                  [guestInfo.ip, assignedVmId]
+                );
+                console.log(`✅ Updated SSH config in database with guest agent IP: ${guestInfo.ip}`);
+              } catch (dbError) {
+                console.warn(`⚠️  Failed to update SSH config in database: ${dbError.message}`);
+              }
+            } else {
+              console.log(`ℹ️  Guest agent did not report an IP (may not be installed or not ready yet)`);
+            }
+          } catch (agentError) {
+            console.log(`ℹ️  Could not get IP from guest agent: ${agentError.message}`);
+            console.log(`   This is normal if QEMU guest agent is not installed. Will use configured IP.`);
+          }
         } catch (startError) {
           console.warn(`⚠️  Failed to start VM (non-fatal): ${startError.message}`);
           // Don't fail the entire operation if start fails, but it will affect world setup

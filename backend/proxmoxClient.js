@@ -253,6 +253,62 @@ class ProxmoxClient {
     }
   }
 
+  /**
+   * Get VM IP address from QEMU guest agent
+   * Returns the first non-loopback IPv4 address found
+   */
+  async getGuestAgentIP(vmid) {
+    if (!this.token) {
+      await this.authenticate();
+    }
+
+    try {
+      const serverDetails = await this.getServerDetails(vmid);
+      const { node, type } = serverDetails;
+
+      if (type !== 'qemu') {
+        throw new Error('Guest agent is only available for QEMU VMs');
+      }
+
+      console.log(`🔍 Querying guest agent for VM ${vmid} network interfaces...`);
+      const response = await this.api.get(`/nodes/${node}/qemu/${vmid}/agent/network-get-interfaces`);
+      const interfaces = response.data.data.result;
+
+      // Find the first non-loopback IPv4 address
+      for (const iface of interfaces) {
+        if (iface.name === 'lo') continue; // Skip loopback
+        
+        if (iface['ip-addresses']) {
+          for (const ip of iface['ip-addresses']) {
+            if (ip['ip-address-type'] === 'ipv4' && !ip['ip-address'].startsWith('127.')) {
+              console.log(`✅ Found guest IP: ${ip['ip-address']} on interface ${iface.name}`);
+              return {
+                ip: ip['ip-address'],
+                interface: iface.name,
+                mac: iface['hardware-address']
+              };
+            }
+          }
+        }
+      }
+
+      console.warn(`⚠️  No non-loopback IPv4 address found in guest agent data`);
+      return null;
+    } catch (error) {
+      // Check if error is because guest agent is not running
+      if (error.response?.status === 500 && error.response?.data?.errors) {
+        const errorMsg = JSON.stringify(error.response.data.errors);
+        if (errorMsg.includes('not running') || errorMsg.includes('QEMU guest agent')) {
+          console.warn(`⚠️  QEMU guest agent not running on VM ${vmid}`);
+          return null;
+        }
+      }
+      
+      console.error(`❌ Failed to get guest agent IP for VM ${vmid}:`, error.message);
+      return null; // Don't throw, just return null if agent is not available
+    }
+  }
+
   // Get the next available VM ID
   async getNextAvailableVmId() {
     if (!this.token) {
