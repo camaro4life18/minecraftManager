@@ -1789,14 +1789,27 @@ async function startServer() {
                     try {
                       console.log(`🔍 Checking minecraft.service status...`);
                       const serviceStatus = await ssh.executeCommand('systemctl status minecraft.service');
-                      const statusStr = typeof serviceStatus === 'string' ? serviceStatus : JSON.stringify(serviceStatus);
-                      console.log(`📊 Service status output:\n${statusStr}`);
+                      let statusStr = '';
+                      
+                      // Handle both object and string responses
+                      if (typeof serviceStatus === 'object' && serviceStatus.stdout) {
+                        statusStr = serviceStatus.stdout;
+                      } else if (typeof serviceStatus === 'string') {
+                        statusStr = serviceStatus;
+                      } else {
+                        statusStr = JSON.stringify(serviceStatus);
+                      }
+                      
+                      console.log(`📊 Service status output:\n${statusStr.substring(0, 500)}`);
                       
                       // Check if service is running
-                      if (statusStr.includes('active (running)') || statusStr.includes('active') && statusStr.includes('running')) {
+                      if (statusStr.includes('active (running)')) {
                         console.log(`✅ minecraft.service is running!`);
-                      } else if (statusStr.includes('inactive')) {
-                        console.warn(`⚠️  minecraft.service is inactive`);
+                      } else if (statusStr.includes('active (exited)')) {
+                        console.log(`ℹ️  minecraft.service exited cleanly`);
+                      } else if (statusStr.includes('failed') || statusStr.includes('inactive')) {
+                        console.warn(`⚠️  minecraft.service failed or is inactive`);
+                        console.warn(`⚠️  Service may need manual restart. Status:\n${statusStr.substring(0, 300)}`);
                       } else {
                         console.warn(`⚠️  minecraft.service status unknown`);
                       }
