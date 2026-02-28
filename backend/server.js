@@ -1326,27 +1326,70 @@ async function startServer() {
               return parts[1] || 'proxmox1'; // Default to first node if parsing fails
             }
 
-            function extractTaskIdFromUpid(upid) {
-              // Extract taskid which is typically part of the UPID
-              const parts = upid.split(':');
-              return parts[4] + ':' + parts[5] || upid; // Return type:ID
+            function extractProgressFromTaskLog(logEntries) {
+              if (!Array.isArray(logEntries) || logEntries.length === 0) {
+                return null;
+              }
+
+              let maxPercent = null;
+              for (const entry of logEntries) {
+                const line = entry?.t || entry?.msg || entry?.line || '';
+                if (!line) {
+                  continue;
+                }
+
+                const matches = line.match(/(\d{1,3}(?:\.\d+)?)%/g);
+                if (!matches) {
+                  continue;
+                }
+
+                for (const match of matches) {
+                  const numeric = parseFloat(match.replace('%', ''));
+                  if (Number.isFinite(numeric) && numeric >= 0 && numeric <= 100) {
+                    const rounded = Math.round(numeric);
+                    maxPercent = maxPercent === null ? rounded : Math.max(maxPercent, rounded);
+                  }
+                }
+              }
+
+              return maxPercent;
             }
 
             const node = extractNodeFromUpid(result.upid);
+            const encodedUpid = encodeURIComponent(result.upid);
             let cloneTaskComplete = false;
             let waitAttempts = 0;
             const maxWaitAttempts = 120; // 2 minutes max of 1-second checks
+            let lastKnownPercent = 2;
 
             while (!cloneTaskComplete && waitAttempts < maxWaitAttempts) {
               try {
                 // Query task status from Proxmox
-                const taskResponse = await cloneProxmox.api.get(`/nodes/${node}/tasks/${result.upid}/status`);
+                const taskResponse = await cloneProxmox.api.get(`/nodes/${node}/tasks/${encodedUpid}/status`);
                 const taskStatus = taskResponse.data.data;
 
                 // Extract progress if available (ranges from 0 to 1)
-                const progressPercent = taskStatus.pct !== undefined 
-                  ? Math.round(taskStatus.pct * 100) 
+                let progressPercent = taskStatus.pct !== undefined
+                  ? Math.round(taskStatus.pct * 100)
                   : null;
+
+                // Some Proxmox endpoints do not return pct for clone tasks; parse from task log as fallback.
+                if (progressPercent === null) {
+                  try {
+                    const taskLogResponse = await cloneProxmox.api.get(`/nodes/${node}/tasks/${encodedUpid}/log`);
+                    const parsedPercent = extractProgressFromTaskLog(taskLogResponse.data?.data);
+                    if (parsedPercent !== null) {
+                      progressPercent = parsedPercent;
+                    }
+                  } catch (logError) {
+                    // Non-fatal fallback; we'll continue with no percentage for this poll cycle.
+                  }
+                }
+
+                if (progressPercent !== null) {
+                  progressPercent = Math.max(lastKnownPercent, progressPercent);
+                  lastKnownPercent = progressPercent;
+                }
 
                 if (taskStatus.status === 'stopped') {
                   if (taskStatus.exitstatus === 'OK') {
@@ -1384,6 +1427,13 @@ async function startServer() {
                     });
                     console.log(`⏳ Clone in progress... ${progressPercent}% (attempt ${waitAttempts + 1}/${maxWaitAttempts})`);
                   } else {
+                    setLiveCloneProgress(clientRequestId, {
+                      userId: req.user.userId,
+                      status: 'in-progress',
+                      currentStep: 'cloning',
+                      progressPercent: lastKnownPercent,
+                      message: `Cloning in progress (attempt ${waitAttempts + 1})`
+                    });
                     console.log(`⏳ Clone in progress... (attempt ${waitAttempts + 1}/${maxWaitAttempts})`);
                   }
                   await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
