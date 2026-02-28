@@ -1636,12 +1636,22 @@ async function startServer() {
         }
         
         try {
-          const startResult = await cloneProxmox.startServer(assignedVmId);
-          console.log(`✅ VM ${assignedVmId} starting with task: ${startResult}`);
+          const startUpid = await cloneProxmox.startServer(assignedVmId);
+          console.log(`✅ VM ${assignedVmId} starting with task: ${startUpid}`);
           
-          // Wait for VM to boot
-          console.log(`⏳ Waiting for VM to boot (30 seconds)...`);
-          await new Promise(resolve => setTimeout(resolve, 30000));
+          // Wait for the start task to complete
+          console.log(`⏳ Waiting for VM start task to complete...`);
+          const startSuccess = await cloneProxmox.waitForTask(startUpid, 120);
+          
+          if (!startSuccess) {
+            throw new Error('VM start task failed or timed out');
+          }
+          
+          console.log(`✅ VM ${assignedVmId} started successfully`);
+          
+          // Wait additional time for SSH to be ready
+          console.log(`⏳ Waiting for SSH to be ready (45 seconds)...`);
+          await new Promise(resolve => setTimeout(resolve, 45000));
         } catch (startError) {
           console.warn(`⚠️  Failed to start VM (non-fatal): ${startError.message}`);
           // Don't fail the entire operation if start fails, but it will affect world setup
@@ -1657,29 +1667,48 @@ async function startServer() {
             // Get SSH client and manager
             const sshConfig = await ManagedServer.getSSHConfig(assignedVmId);
             if (sshConfig && sshConfig.ssh_configured) {
-              const ssh = new SSHClient({
-                host: sshConfig.ssh_host,
-                port: sshConfig.ssh_port,
-                username: sshConfig.ssh_username,
-                privateKey: sshConfig.ssh_private_key
-              });
-
-              const manager = new MinecraftServerManager(
-                ssh,
-                sshConfig.minecraft_path,
-                sshConfig.minecraft_user || 'minecraft'
-              );
-
-              worldSetupResult = await manager.setupFreshWorld(serverSeed);
+              // Retry SSH connection up to 5 times with increasing delays
+              let sshConnected = false;
+              let retryCount = 0;
+              const maxRetries = 5;
               
-              if (worldSetupResult.success) {
-                console.log(`✅ World setup successful for VM ${assignedVmId}`);
-              } else {
-                console.warn(`⚠️  World setup had issues: ${worldSetupResult.message}`);
+              while (!sshConnected && retryCount < maxRetries) {
+                try {
+                  const ssh = new SSHClient({
+                    host: sshConfig.ssh_host,
+                    port: sshConfig.ssh_port,
+                    username: sshConfig.ssh_username,
+                    privateKey: sshConfig.ssh_private_key
+                  });
+
+                  const manager = new MinecraftServerManager(
+                    ssh,
+                    sshConfig.minecraft_path,
+                    sshConfig.minecraft_user || 'minecraft'
+                  );
+
+                  worldSetupResult = await manager.setupFreshWorld(serverSeed);
+                  sshConnected = true;
+                  
+                  if (worldSetupResult.success) {
+                    console.log(`✅ World setup successful for VM ${assignedVmId}`);
+                  } else {
+                    console.warn(`⚠️  World setup had issues: ${worldSetupResult.message}`);
+                  }
+                } catch (sshError) {
+                  retryCount++;
+                  if (retryCount < maxRetries) {
+                    const waitTime = retryCount * 10; // 10, 20, 30, 40 seconds
+                    console.log(`⏳ SSH not ready (attempt ${retryCount}/${maxRetries}), waiting ${waitTime}s before retry...`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
+                  } else {
+                    throw sshError;
+                  }
+                }
               }
             }
           } catch (worldError) {
-            console.error(`⚠️  Failed to setup fresh world (non-fatal):`, worldError.message);
+            console.error(`⚠️  Failed to setup fresh world after ${maxRetries} attempts:`, worldError.message);
             // Don't fail the entire clone operation if world setup fails
             // User can always manually configure later
           }
