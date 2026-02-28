@@ -1722,10 +1722,10 @@ async function startServer() {
             // Get SSH client and manager
             const sshConfig = await ManagedServer.getSSHConfig(assignedVmId);
             if (sshConfig && sshConfig.ssh_configured) {
-              // Retry SSH connection up to 15 times with 10-second intervals (2.5 minutes total)
+              // Retry SSH connection up to 30 times with 10-second intervals (5 minutes total)
               let sshConnected = false;
               let retryCount = 0;
-              const maxRetries = 15;
+              const maxRetries = 30;
               const retryInterval = 10; // seconds between retries
               
               console.log(`⏳ Waiting for SSH to be ready at ${sshConfig.ssh_host}:${sshConfig.ssh_port} (up to ${maxRetries * retryInterval}s)...`);
