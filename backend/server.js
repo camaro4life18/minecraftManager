@@ -1789,12 +1789,13 @@ async function startServer() {
                     try {
                       console.log(`🔍 Checking minecraft.service status...`);
                       const serviceStatus = await ssh.executeCommand('systemctl status minecraft.service');
-                      console.log(`📊 Service status output:\n${serviceStatus}`);
+                      const statusStr = typeof serviceStatus === 'string' ? serviceStatus : JSON.stringify(serviceStatus);
+                      console.log(`📊 Service status output:\n${statusStr}`);
                       
                       // Check if service is running
-                      if (serviceStatus.includes('active (running)')) {
+                      if (statusStr.includes('active (running)') || statusStr.includes('active') && statusStr.includes('running')) {
                         console.log(`✅ minecraft.service is running!`);
-                      } else if (serviceStatus.includes('inactive')) {
+                      } else if (statusStr.includes('inactive')) {
                         console.warn(`⚠️  minecraft.service is inactive`);
                       } else {
                         console.warn(`⚠️  minecraft.service status unknown`);
@@ -2507,14 +2508,15 @@ async function startServer() {
           try {
             console.log(`🔍 Checking minecraft.service status...`);
             const serviceStatus = await ssh.executeCommand('systemctl status minecraft.service');
-            console.log(`📊 Service status output:\n${serviceStatus}`);
+            const statusStr = typeof serviceStatus === 'string' ? serviceStatus : JSON.stringify(serviceStatus);
+            console.log(`📊 Service status output:\n${statusStr}`);
             
             // Check if service is running
             let serviceRunning = false;
-            if (serviceStatus.includes('active (running)')) {
+            if (statusStr.includes('active (running)') || statusStr.includes('active') && statusStr.includes('running')) {
               console.log(`✅ minecraft.service is running!`);
               serviceRunning = true;
-            } else if (serviceStatus.includes('inactive')) {
+            } else if (statusStr.includes('inactive')) {
               console.warn(`⚠️  minecraft.service is inactive`);
             } else {
               console.warn(`⚠️  minecraft.service status unknown`);
