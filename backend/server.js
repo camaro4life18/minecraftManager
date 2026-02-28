@@ -1711,7 +1711,25 @@ async function startServer() {
           // Try to get IP from QEMU guest agent (if installed)
           try {
             console.log(`🔍 Waiting for QEMU guest agent to start (30s)...`);
-            await new Promise(resolve => setTimeout(resolve, 30000)); // Wait 30 seconds for agent to start
+            setLiveCloneProgress(clientRequestId, {
+              userId: req.user.userId,
+              status: 'in-progress',
+              currentStep: 'waiting-for-agent',
+              progressPercent: 45,
+              message: 'Waiting for QEMU guest agent to start (30s)...'
+            });
+            
+            // Wait with periodic progress updates
+            for (let i = 0; i < 6; i++) {
+              await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds at a time
+              setLiveCloneProgress(clientRequestId, {
+                userId: req.user.userId,
+                status: 'in-progress',
+                currentStep: 'waiting-for-agent',
+                progressPercent: 45 + (i * 2),
+                message: `Waiting for QEMU guest agent... (${(i + 1) * 5}s / 30s)`
+              });
+            }
             
             console.log(`🔍 Querying QEMU guest agent for IP address...`);
             const guestInfo = await cloneProxmox.getGuestAgentIP(assignedVmId);
@@ -1772,6 +1790,14 @@ async function startServer() {
                   console.log(`🔍 Testing SSH connection (attempt ${retryCount + 1}/${maxRetries})...`);
                   const testResult = await ssh.executeCommand('echo "SSH connection test"');
                   console.log(`✅ SSH connection successful!`);
+                  
+                  setLiveCloneProgress(clientRequestId, {
+                    userId: req.user.userId,
+                    status: 'in-progress',
+                    currentStep: 'setting-up-world',
+                    progressPercent: 75,
+                    message: 'SSH connected, setting up world...'
+                  });
 
                   const manager = new MinecraftServerManager(
                     ssh,
@@ -1784,6 +1810,14 @@ async function startServer() {
                   
                   if (worldSetupResult.success) {
                     console.log(`✅ World setup successful for VM ${assignedVmId} after ${retryCount + 1} attempt(s)`);
+                    
+                    setLiveCloneProgress(clientRequestId, {
+                      userId: req.user.userId,
+                      status: 'in-progress',
+                      currentStep: 'restarting-service',
+                      progressPercent: 82,
+                      message: 'Restarting minecraft.service...'
+                    });
                     
                     // Restart the minecraft service to start with fresh world
                     console.log(`🔄 Restarting minecraft.service with new world...`);
@@ -1835,10 +1869,19 @@ async function startServer() {
                   if (retryCount < maxRetries) {
                     console.log(`⏳ SSH connection failed (attempt ${retryCount}/${maxRetries}): ${sshError.message}`);
                     console.log(`   Retrying in ${retryInterval}s...`);
+                    const progressPercent = 55 + (retryCount * 2);
+                    setLiveCloneProgress(clientRequestId, {
+                      userId: req.user.userId,
+                      status: 'in-progress',
+                      currentStep: 'waiting-for-ssh',
+                      progressPercent: Math.min(progressPercent, 75),
+                      message: `Waiting for SSH connection (${retryCount}/${maxRetries})...`
+                    });
                     await new Promise(resolve => setTimeout(resolve, retryInterval * 1000));
                   } else {
                     console.error(`❌ SSH failed after ${maxRetries} attempts: ${sshError.message}`);
                     throw sshError;
+                  }
                   }
                 }
               }
@@ -1856,6 +1899,14 @@ async function startServer() {
         // Try to add to Velocity server list (optional - won't fail clone if it fails)
         // Use the SSH host from database (which has the guest agent detected IP)
         let velocityResult = null;
+        
+        setLiveCloneProgress(clientRequestId, {
+          userId: req.user.userId,
+          status: 'in-progress',
+          currentStep: 'configuring-proxy',
+          progressPercent: 90,
+          message: 'Registering with Velocity proxy...'
+        });
         if (velocity.isConfigured() && assignedVmId) {
           try {
             // Get the actual SSH host (with guest agent IP if available)
