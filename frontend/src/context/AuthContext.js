@@ -13,6 +13,16 @@ export function AuthProvider({ children }) {
   // Load token from localStorage on mount
   useEffect(() => {
     const storedToken = localStorage.getItem('authToken');
+    const storedUser = localStorage.getItem('authUser');
+
+    if (storedUser) {
+      try {
+        setUser(JSON.parse(storedUser));
+      } catch (err) {
+        localStorage.removeItem('authUser');
+      }
+    }
+
     if (storedToken) {
       setToken(storedToken);
       // Verify token is still valid
@@ -35,17 +45,20 @@ export function AuthProvider({ children }) {
         const userData = await response.json();
         setUser(userData);
         setToken(tok);
-      } else {
-        // Token is invalid, clear it
+        localStorage.setItem('authUser', JSON.stringify(userData));
+      } else if (response.status === 401 || response.status === 403) {
+        // Token is invalid/expired, clear it
         localStorage.removeItem('authToken');
+        localStorage.removeItem('authUser');
         setToken(null);
         setUser(null);
+      } else {
+        // Backend error (not auth-related): keep existing session data
+        console.warn('Token verification failed with non-auth status:', response.status);
       }
     } catch (err) {
       console.error('Token verification failed:', err);
-      localStorage.removeItem('authToken');
-      setToken(null);
-      setUser(null);
+      // Network/transient failure: keep existing token/user so refresh doesn't force logout
     } finally {
       setLoading(false);
     }
@@ -71,6 +84,7 @@ export function AuthProvider({ children }) {
       setToken(newToken);
       setUser(data.user);
       localStorage.setItem('authToken', newToken);
+      localStorage.setItem('authUser', JSON.stringify(data.user));
 
       return true;
     } catch (err) {
@@ -95,6 +109,7 @@ export function AuthProvider({ children }) {
       setToken(null);
       setUser(null);
       localStorage.removeItem('authToken');
+      localStorage.removeItem('authUser');
     }
   }, [token, API_BASE]);
 

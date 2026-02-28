@@ -51,7 +51,24 @@ function AppContent() {
           'Authorization': `Bearer ${token}`
         }
       });
-      if (!response.ok) throw new Error('Failed to fetch servers');
+
+      if (!response.ok) {
+        let errorMessage = 'Failed to fetch servers';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        } catch (parseErr) {
+          // Keep default message if response body is not JSON
+        }
+
+        if (response.status === 401 || response.status === 403) {
+          await logout();
+          throw new Error('Session expired. Please log in again.');
+        }
+
+        throw new Error(errorMessage);
+      }
+
       const data = await response.json();
       
       // Handle both old format (array) and new format (object with servers and pagination)
