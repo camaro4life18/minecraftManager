@@ -1707,10 +1707,6 @@ async function startServer() {
           }
           
           console.log(`✅ VM ${assignedVmId} started successfully`);
-          
-          // Wait additional time for SSH to be ready
-          console.log(`⏳ Waiting for SSH to be ready (45 seconds)...`);
-          await new Promise(resolve => setTimeout(resolve, 45000));
         } catch (startError) {
           console.warn(`⚠️  Failed to start VM (non-fatal): ${startError.message}`);
           // Don't fail the entire operation if start fails, but it will affect world setup
@@ -1726,10 +1722,13 @@ async function startServer() {
             // Get SSH client and manager
             const sshConfig = await ManagedServer.getSSHConfig(assignedVmId);
             if (sshConfig && sshConfig.ssh_configured) {
-              // Retry SSH connection up to 5 times with increasing delays
+              // Retry SSH connection up to 15 times with 10-second intervals (2.5 minutes total)
               let sshConnected = false;
               let retryCount = 0;
-              const maxRetries = 5;
+              const maxRetries = 15;
+              const retryInterval = 10; // seconds between retries
+              
+              console.log(`⏳ Waiting for SSH to be ready at ${sshConfig.ssh_host}:${sshConfig.ssh_port} (up to ${maxRetries * retryInterval}s)...`);
               
               while (!sshConnected && retryCount < maxRetries) {
                 try {
@@ -1750,17 +1749,18 @@ async function startServer() {
                   sshConnected = true;
                   
                   if (worldSetupResult.success) {
-                    console.log(`✅ World setup successful for VM ${assignedVmId}`);
+                    console.log(`✅ World setup successful for VM ${assignedVmId} after ${retryCount + 1} attempt(s)`);
                   } else {
                     console.warn(`⚠️  World setup had issues: ${worldSetupResult.message}`);
                   }
                 } catch (sshError) {
                   retryCount++;
                   if (retryCount < maxRetries) {
-                    const waitTime = retryCount * 10; // 10, 20, 30, 40 seconds
-                    console.log(`⏳ SSH not ready (attempt ${retryCount}/${maxRetries}), waiting ${waitTime}s before retry...`);
-                    await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
+                    console.log(`⏳ SSH connection failed (attempt ${retryCount}/${maxRetries}): ${sshError.message}`);
+                    console.log(`   Retrying in ${retryInterval}s...`);
+                    await new Promise(resolve => setTimeout(resolve, retryInterval * 1000));
                   } else {
+                    console.error(`❌ SSH failed after ${maxRetries} attempts`);
                     throw sshError;
                   }
                 }
