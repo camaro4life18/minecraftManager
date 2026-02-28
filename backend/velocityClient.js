@@ -1,7 +1,10 @@
 import SSHClient from './sshClient.js';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import { promisify } from 'util';
+import { exec } from 'child_process';
 
+const execAsync = promisify(exec);
 dotenv.config();
 
 class VelocityClient {
@@ -10,13 +13,158 @@ class VelocityClient {
     this.host = config.host || process.env.VELOCITY_HOST;
     this.port = config.port || process.env.VELOCITY_SSH_PORT || 22;
     this.username = config.username || process.env.VELOCITY_SSH_USER || 'joseph';
-    this.privateKeyPath = config.privateKeyPath || process.env.VELOCITY_SSH_KEY || '/root/.ssh/id_rsa';
+    this.password = config.password; // For initial setup only
+    this.privateKeyPath = config.privateKeyPath || process.env.VELOCITY_SSH_KEY || '/root/.ssh/id_rsa_velocity';
     this.velocityConfigPath = config.configPath || process.env.VELOCITY_CONFIG_PATH || '/opt/velocity-proxy/velocity.toml';
     this.velocityServiceName = config.serviceName || process.env.VELOCITY_SERVICE_NAME || 'velocity';
   }
 
   isConfigured() {
     return !!(this.host);
+  }
+
+  /**
+   * Check if SSH key exists
+   */
+  hasSSHKey() {
+    try {
+      return fs.existsSync(this.privateKeyPath) && fs.existsSync(`${this.privateKeyPath}.pub`);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Generate SSH key pair if it doesn't exist
+   */
+  async generateSSHKey() {
+    if (this.hasSSHKey()) {
+      console.log('✓ SSH key already exists');
+      return { success: true, message: 'SSH key already exists' };
+    }
+
+    try {
+      console.log(`🔑 Generating SSH key pair at ${this.privateKeyPath}...`);
+      
+      // Ensure .ssh directory exists
+      const sshDir = this.privateKeyPath.substring(0, this.privateKeyPath.lastIndexOf('/'));
+      if (!fs.existsSync(sshDir)) {
+        fs.mkdirSync(sshDir, { recursive: true, mode: 0o700 });
+      }
+
+      // Generate key with ssh-keygen
+      await execAsync(
+        `ssh-keygen -t rsa -b 4096 -f "${this.privateKeyPath}" -N "" -C "velocity-manager@minecraft-web"`
+      );
+
+      // Set correct permissions
+      fs.chmodSync(this.privateKeyPath, 0o600);
+      fs.chmodSync(`${this.privateKeyPath}.pub`, 0o644);
+
+      console.log('✓ SSH key pair generated successfully');
+      return { success: true, message: 'SSH key generated' };
+    } catch (error) {
+      console.error('❌ Failed to generate SSH key:', error.message);
+      throw new Error(`SSH key generation failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Setup SSH key authentication using password
+   */
+  async setupSSHKeyAuth() {
+    if (!this.password) {
+      throw new Error('Password is required for initial SSH key setup');
+    }
+
+    try {
+      // Generate key if it doesn't exist
+      await this.generateSSHKey();
+
+      // Read the public key
+      const publicKey = fs.readFileSync(`${this.privateKeyPath}.pub`, 'utf8').trim();
+
+      console.log(`🔐 Setting up SSH key authentication for ${this.username}@${this.host}...`);
+
+      // Use sshpass to copy the key to remote host
+      // First, check if sshpass is available, if not use ssh-copy-id with expect
+      const copyKeyCmd = `
+        mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
+        echo '${publicKey}' >> ~/.ssh/authorized_keys && \
+        chmod 600 ~/.ssh/authorized_keys && \
+        echo "SSH_KEY_INSTALLED"
+      `;
+
+      // Use sshpass if available, otherwise provide instructions
+      try {
+        await execAsync(`which sshpass`);
+        // sshpass is available
+        const result = await execAsync(
+          `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "${copyKeyCmd}"`
+        );
+
+        if (result.stdout.includes('SSH_KEY_INSTALLED')) {
+          console.log('✓ SSH key installed on Velocity server');
+          return { success: true, message: 'SSH key authentication configured' };
+        } else {
+          throw new Error('Key installation verification failed');
+        }
+      } catch (sshpassError) {
+        // sshpass not available, try alternative method
+        console.log('⚠️  sshpass not available, attempting alternative method...');
+        
+        // Install sshpass first
+        try {
+          await execAsync('apk add --no-cache sshpass');
+          console.log('✓ Installed sshpass');
+          
+          // Retry with sshpass
+          const result = await execAsync(
+            `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "${copyKeyCmd}"`
+          );
+
+          if (result.stdout.includes('SSH_KEY_INSTALLED')) {
+            console.log('✓ SSH key installed on Velocity server');
+            return { success: true, message: 'SSH key authentication configured' };
+          }
+        } catch (installError) {
+          throw new Error(`Could not install sshpass or copy SSH key: ${installError.message}`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ SSH key setup failed:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Test connection with password (before key setup)
+   */
+  async testPasswordConnection() {
+    if (!this.password) {
+      throw new Error('Password is required');
+    }
+
+    try {
+      // Check if sshpass is available
+      try {
+        await execAsync('which sshpass');
+      } catch {
+        await execAsync('apk add --no-cache sshpass');
+      }
+
+      const result = await execAsync(
+        `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "echo CONNECTION_OK"`
+      );
+
+      if (result.stdout.includes('CONNECTION_OK')) {
+        return { success: true, message: 'Password authentication successful' };
+      } else {
+        throw new Error('Connection test failed');
+      }
+    } catch (error) {
+      throw new Error(`Password authentication failed: ${error.message}`);
+    }
   }
 
   /**

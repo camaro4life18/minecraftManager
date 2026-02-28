@@ -677,7 +677,7 @@ async function startServer() {
             host, 
             port: sshPort || 22,
             username: sshUser || 'joseph',
-            privateKeyPath: sshKeyPath || '/root/.ssh/id_rsa',
+            privateKeyPath: sshKeyPath || '/root/.ssh/id_rsa_velocity',
             configPath: configPath || '/opt/velocity-proxy/velocity.toml',
             serviceName: serviceName || 'velocity'
           });
@@ -694,6 +694,128 @@ async function startServer() {
             error: `Connection failed: ${error.message}` 
           });
         }
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Test Velocity password authentication
+    app.post('/api/admin/config/test-velocity-password', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { host, sshPort, sshUser, password } = req.body;
+
+        if (!host || !password) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Velocity host and password are required' 
+          });
+        }
+
+        try {
+          const testVelocity = new VelocityClient({ 
+            host, 
+            port: sshPort || 22,
+            username: sshUser || 'joseph',
+            password
+          });
+          await testVelocity.testPasswordConnection();
+          
+          res.json({ 
+            success: true, 
+            message: 'Password authentication successful'
+          });
+        } catch (error) {
+          res.json({ 
+            success: false, 
+            error: error.message 
+          });
+        }
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Setup SSH key authentication for Velocity
+    app.post('/api/admin/config/setup-velocity-ssh', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { host, sshPort, sshUser, password, sshKeyPath, configPath, serviceName } = req.body;
+
+        if (!host || !password) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Velocity host and password are required' 
+          });
+        }
+
+        try {
+          console.log(`🔐 Setting up SSH key authentication for ${host}...`);
+          
+          const velocityClient = new VelocityClient({ 
+            host, 
+            port: sshPort || 22,
+            username: sshUser || 'joseph',
+            password,
+            privateKeyPath: sshKeyPath || '/root/.ssh/id_rsa_velocity',
+            configPath: configPath || '/opt/velocity-proxy/velocity.toml',
+            serviceName: serviceName || 'velocity'
+          });
+
+          // Setup SSH key authentication
+          await velocityClient.setupSSHKeyAuth();
+
+          // Test the key-based connection
+          const testResult = await velocityClient.listServers();
+          
+          res.json({ 
+            success: true, 
+            message: `SSH key authentication configured successfully. Found ${testResult.servers.length} server(s).`,
+            servers: testResult.servers
+          });
+        } catch (error) {
+          console.error('SSH setup error:', error);
+          res.json({ 
+            success: false, 
+            error: error.message 
+          });
+        }
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Check SSH key status for Velocity
+    app.get('/api/admin/config/velocity-ssh-status', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const host = await AppConfig.get('velocity_host');
+        if (!host) {
+          return res.json({ 
+            configured: false, 
+            hasSSHKey: false,
+            message: 'Velocity not configured'
+          });
+        }
+
+        const sshKeyPath = await AppConfig.get('velocity_ssh_key') || '/root/.ssh/id_rsa_velocity';
+        const sshPort = await AppConfig.get('velocity_ssh_port');
+        const sshUser = await AppConfig.get('velocity_ssh_user');
+
+        const velocityClient = new VelocityClient({
+          host,
+          port: sshPort ? parseInt(sshPort) : 22,
+          username: sshUser || 'joseph',
+          privateKeyPath: sshKeyPath
+        });
+
+        const hasKey = velocityClient.hasSSHKey();
+
+        res.json({ 
+          configured: true,
+          hasSSHKey: hasKey,
+          host,
+          sshUser: sshUser || 'joseph',
+          sshKeyPath,
+          message: hasKey ? 'SSH key is configured' : 'SSH key not found - password required for setup'
+        });
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
       }

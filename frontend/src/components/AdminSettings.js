@@ -13,7 +13,8 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     host: '',
     sshPort: 22,
     sshUser: 'joseph',
-    sshKeyPath: '/root/.ssh/id_rsa',
+    password: '',
+    sshKeyPath: '/root/.ssh/id_rsa_velocity',
     configPath: '/opt/velocity-proxy/velocity.toml',
     serviceName: 'velocity',
     backendNetwork: '192.168.1'
@@ -32,10 +33,13 @@ function AdminSettings({ apiBase, token, isAdmin }) {
   const [success, setSuccess] = useState(null);
   const [testingProxmox, setTestingProxmox] = useState(false);
   const [testingVelocity, setTestingVelocity] = useState(false);
+  const [settingUpVelocity, setSettingUpVelocity] = useState(false);
+  const [velocitySSHStatus, setVelocitySSHStatus] = useState(null);
   const [testingRouter, setTestingRouter] = useState(false);
   const [proxmoxNodes, setProxmoxNodes] = useState([]);
   const [showPasswords, setShowPasswords] = useState({
     proxmoxPassword: false,
+    velocityPassword: false,
     routerPassword: false
   });
   const [activeTab, setActiveTab] = useState('proxmox');
@@ -43,6 +47,28 @@ function AdminSettings({ apiBase, token, isAdmin }) {
   useEffect(() => {
     loadConfiguration();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'velocity') {
+      loadVelocitySSHStatus();
+    }
+  }, [activeTab])
+
+;
+
+  const loadVelocitySSHStatus = async () => {
+    try {
+      const response = await fetch(`${apiBase}/api/admin/config/velocity-ssh-status`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const status = await response.json();
+        setVelocitySSHStatus(status);
+      }
+    } catch (err) {
+      console.error('Error loading Velocity SSH status:', err);
+    }
+  };
 
   const loadConfiguration = async () => {
     try {
@@ -76,7 +102,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
           host: config.velocity_host?.value || '',
           sshPort: parseInt(config.velocity_ssh_port?.value || 22),
           sshUser: config.velocity_ssh_user?.value || 'joseph',
-          sshKeyPath: config.velocity_ssh_key?.value || '/root/.ssh/id_rsa',
+          sshKeyPath: config.velocity_ssh_key?.value || '/root/.ssh/id_rsa_velocity',
           configPath: config.velocity_config_path?.value || '/opt/velocity-proxy/velocity.toml',
           serviceName: config.velocity_service_name?.value || 'velocity',
           backendNetwork: config.velocity_backend_network?.value || '192.168.1'
@@ -191,6 +217,96 @@ function AdminSettings({ apiBase, token, isAdmin }) {
       setError(`Connection error: ${err.message}`);
     } finally {
       setTestingVelocity(false);
+    }
+  };
+
+  const testVelocityPassword = async () => {
+    try {
+      setTestingVelocity(true);
+      setError(null);
+
+      if (!velocity.password) {
+        setError('Password is required for testing');
+        setTestingVelocity(false);
+        return;
+      }
+
+      const response = await fetch(`${apiBase}/api/admin/config/test-velocity-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          host: velocity.host,
+          sshPort: velocity.sshPort,
+          sshUser: velocity.sshUser,
+          password: velocity.password
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setSuccess('✓ Password authentication successful! You can now setup SSH keys.');
+      } else {
+        setError(`✗ Authentication failed: ${result.error}`);
+      }
+    } catch (err) {
+      setError(`Connection error: ${err.message}`);
+    } finally {
+      setTestingVelocity(false);
+    }
+  };
+
+  const setupVelocitySSH = async () => {
+    try {
+      setSettingUpVelocity(true);
+      setError(null);
+      setSuccess(null);
+
+      if (!velocity.host || !velocity.password) {
+        setError('Host and password are required');
+        setSettingUpVelocity(false);
+        return;
+      }
+
+      console.log('Setting up SSH authentication for Velocity...');
+
+      const response = await fetch(`${apiBase}/api/admin/config/setup-velocity-ssh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          host: velocity.host,
+          sshPort: velocity.sshPort,
+          sshUser: velocity.sshUser,
+          password: velocity.password,
+          sshKeyPath: velocity.sshKeyPath,
+          configPath: velocity.configPath,
+          serviceName: velocity.serviceName
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setSuccess(`✓ ${result.message}`);
+        // Clear password after successful setup
+        setVelocity(prev => ({ ...prev, password: '' }));
+        // Reload SSH status
+        await loadVelocitySSHStatus();
+        // Now save the configuration
+        await saveVelocityConfig();
+      } else {
+        setError(`✗ Setup failed: ${result.error}`);
+      }
+    } catch (err) {
+      setError(`Setup error: ${err.message}`);
+    } finally {
+      setSettingUpVelocity(false);
     }
   };
 
@@ -580,6 +696,36 @@ function AdminSettings({ apiBase, token, isAdmin }) {
               </div>
 
               <div className="form-group">
+                <label htmlFor="velocity-password">
+                  SSH Password:
+                  <button
+                    type="button"
+                    className="show-password-btn"
+                    onClick={() => setShowPasswords(prev => ({
+                      ...prev,
+                      velocityPassword: !prev.velocityPassword
+                    }))}
+                  >
+                    {showPasswords.velocityPassword ? '🙈' : '👁️'}
+                  </button>
+                </label>
+                <input
+                  type={showPasswords.velocityPassword ? 'text' : 'password'}
+                  id="velocity-password"
+                  name="password"
+                  value={velocity.password}
+                  onChange={handleVelocityChange}
+                  placeholder="Password for initial SSH key setup"
+                  disabled={loading}
+                />
+                <small>
+                  {velocitySSHStatus?.hasSSHKey 
+                    ? '✓ SSH key is configured. Password only needed if regenerating key.' 
+                    : '⚠️ Password required for initial SSH key setup'}
+                </small>
+              </div>
+
+              <div className="form-group">
                 <label htmlFor="velocity-ssh-key">SSH Private Key Path:</label>
                 <input
                   type="text"
@@ -587,10 +733,10 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                   name="sshKeyPath"
                   value={velocity.sshKeyPath}
                   onChange={handleVelocityChange}
-                  placeholder="/root/.ssh/id_rsa"
+                  placeholder="/root/.ssh/id_rsa_velocity"
                   disabled={loading}
                 />
-                <small>Path to SSH private key on the backend container</small>
+                <small>Path to SSH private key on the backend container (auto-generated)</small>
               </div>
 
               <div className="form-group">
@@ -635,22 +781,54 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                 <small>Network prefix for backend servers (e.g., 192.168.1 for VMs at 192.168.1.x)</small>
               </div>
 
+              {velocitySSHStatus && (
+                <div className="config-status">
+                  <strong>SSH Status:</strong> {velocitySSHStatus.hasSSHKey ? '✓ Key configured' : '⚠️ Key not found'}
+                </div>
+              )}
+
               <div className="form-actions">
-                <button
-                  type="button"
-                  className="btn-test"
-                  onClick={testVelocityConnection}
-                  disabled={loading || testingVelocity || !velocity.host || !velocity.apiKey}
-                >
-                  {testingVelocity ? 'Testing...' : '🔗 Test Connection'}
-                </button>                <button
-                  type="button"
-                  className="btn-test"
-                  onClick={saveVelocityConfig}
-                  disabled={loading || !velocity.host || !velocity.port || !velocity.apiKey}
-                >
-                  {loading ? 'Saving...' : '💾 Save Velocity Config'}
-                </button>              </div>
+                {!velocitySSHStatus?.hasSSHKey && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-test"
+                      onClick={testVelocityPassword}
+                      disabled={loading || testingVelocity || !velocity.host || !velocity.password}
+                    >
+                      {testingVelocity ? 'Testing...' : '🔐 Test Password'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={setupVelocitySSH}
+                      disabled={loading || settingUpVelocity || testingVelocity || !velocity.host || !velocity.password}
+                    >
+                      {settingUpVelocity ? 'Setting up...' : '🔑 Setup SSH Authentication'}
+                    </button>
+                  </>
+                )}
+                {velocitySSHStatus?.hasSSHKey && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-test"
+                      onClick={testVelocityConnection}
+                      disabled={loading || testingVelocity || !velocity.host}
+                    >
+                      {testingVelocity ? 'Testing...' : '🔗 Test SSH Connection'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={saveVelocityConfig}
+                      disabled={loading || !velocity.host}
+                    >
+                      {loading ? 'Saving...' : '💾 Save Configuration'}
+                    </button>
+                  </>
+                )}
+              </div>
             </form>
           </div>
         )}
