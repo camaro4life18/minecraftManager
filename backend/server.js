@@ -42,6 +42,28 @@ const app = express();
 const port = process.env.PORT || 5000;
 const routerServiceUrl = process.env.ROUTER_SERVICE_URL || 'http://localhost:7001';
 const dhcpEnabled = process.env.DHCP_ENABLED !== 'false';
+const liveCloneProgress = new Map();
+
+const setLiveCloneProgress = (requestId, payload) => {
+  if (!requestId) {
+    return;
+  }
+
+  liveCloneProgress.set(requestId, {
+    ...payload,
+    updatedAt: new Date().toISOString()
+  });
+};
+
+const clearLiveCloneProgressLater = (requestId, delayMs = 30 * 60 * 1000) => {
+  if (!requestId) {
+    return;
+  }
+
+  setTimeout(() => {
+    liveCloneProgress.delete(requestId);
+  }, delayMs);
+};
 
 const routerServicePost = async (path, payload) => {
   try {
@@ -1124,6 +1146,25 @@ async function startServer() {
     });
 
     // Clone a server (protected - users and admins)
+    app.get('/api/servers/clone-progress/:requestId', verifyToken, async (req, res) => {
+      try {
+        const { requestId } = req.params;
+        const progress = liveCloneProgress.get(requestId);
+
+        if (!progress) {
+          return res.status(404).json({ error: 'Progress not found' });
+        }
+
+        if (req.user.role !== 'admin' && progress.userId !== req.user.userId) {
+          return res.status(403).json({ error: 'Permission denied' });
+        }
+
+        res.json(progress);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     app.post('/api/servers/clone', verifyToken, async (req, res) => {
       try {
         // Check permissions
@@ -1131,7 +1172,7 @@ async function startServer() {
           return res.status(403).json({ error: 'You do not have permission to clone servers' });
         }
 
-        const { sourceVmId, newVmId, domainName, seed, targetNode, targetStorage } = req.body;
+        const { sourceVmId, newVmId, domainName, seed, targetNode, targetStorage, clientRequestId } = req.body;
         
         // newVmId is now optional - Proxmox will auto-assign if not provided
         if (!sourceVmId || !domainName) {
@@ -1148,6 +1189,14 @@ async function startServer() {
             error: `Clone limit reached. Max ${maxClonesPerUser} managed servers per user.`
           });
         }
+
+        setLiveCloneProgress(clientRequestId, {
+          userId: req.user.userId,
+          status: 'in-progress',
+          currentStep: 'initializing',
+          progressPercent: 1,
+          message: 'Clone request accepted'
+        });
 
         const localIp = process.env.VELOCITY_BACKEND_NETWORK || '192.168.1';
 
@@ -1251,6 +1300,13 @@ async function startServer() {
         const newVmName = domainName;
         console.log(`📍 Clone parameters - targetNode: ${targetNode}, targetStorage: ${targetStorage}`);
         const result = await cloneProxmox.cloneServer(sourceVmId, newVmId, newVmName, targetNode, targetStorage);
+        setLiveCloneProgress(clientRequestId, {
+          userId: req.user.userId,
+          status: 'in-progress',
+          currentStep: 'clone_requested',
+          progressPercent: 2,
+          message: 'Clone task requested in Proxmox'
+        });
         
         // Extract the actual assigned VM ID from the result
         // If newVmId was provided, use it; otherwise Proxmox assigned one
@@ -1296,15 +1352,36 @@ async function startServer() {
                   if (taskStatus.exitstatus === 'OK') {
                     console.log(`✅ Clone task completed successfully!`);
                     await CloneStatus.updateStep(assignedVmId, 'cloning', 100);
+                    setLiveCloneProgress(clientRequestId, {
+                      userId: req.user.userId,
+                      status: 'in-progress',
+                      currentStep: 'clone_completed',
+                      progressPercent: 100,
+                      message: 'Clone task completed'
+                    });
                     cloneTaskComplete = true;
                   } else {
                     console.warn(`⚠️  Clone task ended with status: ${taskStatus.exitstatus}`);
+                    setLiveCloneProgress(clientRequestId, {
+                      userId: req.user.userId,
+                      status: 'failed',
+                      currentStep: 'cloning',
+                      progressPercent: progressPercent ?? 0,
+                      message: `Clone task ended with status: ${taskStatus.exitstatus}`
+                    });
                     cloneTaskComplete = true;
                   }
                 } else {
                   // Update progress in database
                   if (progressPercent !== null) {
                     await CloneStatus.updateStep(assignedVmId, 'cloning', progressPercent);
+                    setLiveCloneProgress(clientRequestId, {
+                      userId: req.user.userId,
+                      status: 'in-progress',
+                      currentStep: 'cloning',
+                      progressPercent,
+                      message: `Cloning in progress: ${progressPercent}%`
+                    });
                     console.log(`⏳ Clone in progress... ${progressPercent}% (attempt ${waitAttempts + 1}/${maxWaitAttempts})`);
                   } else {
                     console.log(`⏳ Clone in progress... (attempt ${waitAttempts + 1}/${maxWaitAttempts})`);
@@ -1578,6 +1655,16 @@ async function startServer() {
         // Mark clone as completed
         await CloneStatus.markComplete(assignedVmId);
 
+        setLiveCloneProgress(clientRequestId, {
+          userId: req.user.userId,
+          status: 'completed',
+          currentStep: 'completed',
+          progressPercent: 100,
+          message: 'Clone completed successfully',
+          vmid: assignedVmId
+        });
+        clearLiveCloneProgressLater(clientRequestId);
+
         res.json({ 
           success: true, 
           taskId: result, 
@@ -1593,6 +1680,15 @@ async function startServer() {
       } catch (error) {
         console.error(`❌ Clone failed:`, error);
         console.error(`Error details:`, error.response?.data || error.message);
+        const { clientRequestId } = req.body || {};
+        setLiveCloneProgress(clientRequestId, {
+          userId: req.user?.userId,
+          status: 'failed',
+          currentStep: 'failed',
+          progressPercent: 0,
+          message: error.message || 'Clone failed'
+        });
+        clearLiveCloneProgressLater(clientRequestId);
         
         // Try to mark the clone as failed (if we have a VM ID context)
         try {

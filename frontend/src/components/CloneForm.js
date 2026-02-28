@@ -90,6 +90,50 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
     }));
   };
 
+  const pollLiveCloneProgress = (requestId, addLog) => {
+    let stopped = false;
+
+    const intervalId = setInterval(async () => {
+      if (stopped) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`${apiBase}/api/servers/clone-progress/${requestId}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const progress = await response.json();
+
+        if (progress.progressPercent !== null && progress.progressPercent !== undefined) {
+          setCloneProgress(progress.progressPercent);
+        }
+
+        if (progress.currentStep) {
+          setCloneStep(progress.currentStep);
+        }
+
+        if (progress.status === 'failed') {
+          addLog(`❌ ${progress.message || 'Clone failed'}`);
+          setError(progress.message || 'Clone failed');
+        }
+      } catch (err) {
+        console.error('Failed to fetch live clone progress:', err);
+      }
+    }, 1000);
+
+    return () => {
+      stopped = true;
+      clearInterval(intervalId);
+    };
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
@@ -104,7 +148,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
       return;
     }
 
-    let requestProgressInterval = null;
+    let stopLiveProgressPolling = null;
 
     try {
       setLoading(true);
@@ -121,6 +165,8 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
         domainName: formData.domainName,
         seed: seed
       };
+      const clientRequestId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      payload.clientRequestId = clientRequestId;
 
       // Only include newVmId if user specified one, otherwise Proxmox will auto-assign
       if (formData.newVmId) {
@@ -145,10 +191,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
       if (formData.targetNode) addLog(`🖥️ Target Node: ${formData.targetNode}`);
       if (formData.targetStorage) addLog(`💾 Target Storage: ${formData.targetStorage}`);
       addLog('⏳ Sending clone request...');
-
-      requestProgressInterval = setInterval(() => {
-        setCloneProgress(prev => (prev < 90 ? prev + 1 : prev));
-      }, 1500);
+      stopLiveProgressPolling = pollLiveCloneProgress(clientRequestId, addLog);
 
       const response = await fetch(`${apiBase}/api/servers/clone`, {
         method: 'POST',
@@ -169,85 +212,30 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
       const seedDisplay = result.seed || seed;
       const newVmId = result.vmid || result.newVmId;
 
-      if (requestProgressInterval) {
-        clearInterval(requestProgressInterval);
+      if (stopLiveProgressPolling) {
+        stopLiveProgressPolling();
       }
       
       setClonedVmId(newVmId);
-      addLog(`✅ Clone initiated!`);
+      addLog(`✅ Clone completed!`);
       addLog(`🆔 VM ID: ${newVmId}`);
       addLog(`🌱 Seed: ${seedDisplay}`);
-      addLog(`📍 Monitoring clone progress...`);
-      
-      // Start polling for clone progress
-      pollCloneProgress(newVmId, addLog);
+      setCloneProgress(100);
+      setCloneStep('completed');
+      setLoading(false);
+
+      setTimeout(() => {
+        alert(`Server cloning completed!\n\nDomain: ${result.domainName}\nSeed: ${seedDisplay}\n\nThe server is ready and will appear in the list shortly.`);
+        onSuccess();
+      }, 1000);
     } catch (err) {
-      if (requestProgressInterval) {
-        clearInterval(requestProgressInterval);
+      if (stopLiveProgressPolling) {
+        stopLiveProgressPolling();
       }
       setError(err.message);
       setConsoleLogs(prev => [...prev, `❌ Error: ${err.message}`]);
       setLoading(false);
     }
-  };
-
-  // Poll for clone progress
-  const pollCloneProgress = async (vmid, addLog) => {
-    let pollStopped = false;
-
-    const pollInterval = setInterval(async () => {
-      try {
-        const response = await fetch(`${apiBase}/api/servers/${vmid}/clone-status`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-
-        if (response.ok) {
-          const status = await response.json();
-          
-          // Update progress
-          if (status.progress_percent !== null && status.progress_percent !== undefined) {
-            setCloneProgress(status.progress_percent);
-          }
-          
-          // Update step
-          if (status.current_step) {
-            setCloneStep(status.current_step);
-          }
-          
-          // Check if complete or failed
-          if (status.status === 'completed') {
-            clearInterval(pollInterval);
-            pollStopped = true;
-            addLog('✨ Clone completed successfully!');
-            setCloneProgress(100);
-            setLoading(false);
-            setTimeout(() => {
-              alert(`Server cloning completed!\n\nDomain: ${status.domain_name}\n\nThe server is ready and will appear in the list shortly.`);
-              onSuccess();
-            }, 1500);
-          } else if (status.status === 'failed') {
-            clearInterval(pollInterval);
-            pollStopped = true;
-            addLog(`❌ Clone failed: ${status.error_message || 'Unknown error'}`);
-            setError(status.error_message || 'Clone failed');
-            setLoading(false);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to poll clone status:', err);
-      }
-    }, 2000); // Poll every 2 seconds
-    
-    // Clear interval after 10 minutes max
-    setTimeout(() => {
-      clearInterval(pollInterval);
-      if (!pollStopped) {
-        addLog('⚠️ Clone monitoring timed out. Check status manually.');
-        setLoading(false);
-      }
-    }, 600000);
   };
 
   return (
