@@ -8,6 +8,7 @@ import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
 import ProxmoxClient from './proxmoxClient.js';
 import VelocityClient from './velocityClient.js';
 import DNSClient from './dnsClient.js';
@@ -109,21 +110,9 @@ async function startServer() {
     await initializeDatabase();
     console.log('✓ Database initialized');
 
-    // Initialize Proxmox client
-    const proxmox = new ProxmoxClient({
-      host: process.env.PROXMOX_HOST,
-      username: process.env.PROXMOX_USERNAME,
-      password: process.env.PROXMOX_PASSWORD,
-      realm: process.env.PROXMOX_REALM || 'pam'
-    });
-
-    // Initialize Velocity client
-    const velocity = new VelocityClient();
-    if (velocity.isConfigured()) {
-      console.log('✓ Velocity server configured');
-    } else {
-      console.log('ℹ  Velocity server not configured (optional)');
-    }
+    // Proxmox client will be loaded from database config via getProxmoxClient() helper
+    // Velocity client will be loaded from database config via getVelocityClient() helper
+    // DNS client will be loaded from database config via getDNSClient() helper
 
     // Middleware
     app.use(cors());
@@ -136,6 +125,25 @@ async function startServer() {
       dest: 'uploads/',
       limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
     });
+
+    // Helper function to get Proxmox client with current configuration
+    async function getProxmoxClient() {
+      const host = await AppConfig.get('proxmox_host');
+      const username = await AppConfig.get('proxmox_username');
+      const password = await AppConfig.get('proxmox_password');
+      const realm = await AppConfig.get('proxmox_realm') || 'pam';
+      
+      if (!host || !username || !password) {
+        throw new Error('Proxmox not configured - please configure in Admin Settings');
+      }
+      
+      return new ProxmoxClient({
+        host,
+        username,
+        password,
+        realm
+      });
+    }
 
     // Helper function to get Velocity client with current configuration
     async function getVelocityClient() {
@@ -951,7 +959,6 @@ async function startServer() {
         const sshPort = await AppConfig.get('dns_ssh_port');
         const sshUser = await AppConfig.get('dns_ssh_user');
 
-        const fs = require('fs');
         const hasKey = fs.existsSync(sshKeyPath);
 
         res.json({ 
@@ -1253,30 +1260,19 @@ async function startServer() {
 
         console.log('✓ Admin check passed');
 
-        // Load Proxmox config from database
-        console.log('📋 Loading Proxmox config from database...');
-        const proxmoxHost = await AppConfig.get('proxmox_host');
-        const proxmoxUsername = await AppConfig.get('proxmox_username');
-        const proxmoxPassword = await AppConfig.get('proxmox_password');
-        const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
-
-        console.log(`📋 Proxmox config loaded: host=${proxmoxHost}, user=${proxmoxUsername}, realm=${proxmoxRealm}`);
-
-        if (!proxmoxHost || !proxmoxUsername || !proxmoxPassword) {
-          console.log('❌ Proxmox not configured properly');
+        // Get Proxmox client with current config from database
+        console.log('📋 Loading Proxmox client from database config...');
+        let currentProxmox;
+        try {
+          currentProxmox = await getProxmoxClient();
+          console.log(`✓ Proxmox client loaded successfully`);
+        } catch (error) {
+          console.log('❌ Proxmox not configured properly:', error.message);
           return res.status(400).json({ 
             error: 'Proxmox not configured',
             message: 'Please configure Proxmox credentials in Admin Settings → Configuration'
           });
         }
-
-        // Get all servers from Proxmox (not just minecraft-named ones)
-        const currentProxmox = new ProxmoxClient({
-          host: proxmoxHost,
-          username: proxmoxUsername,
-          password: proxmoxPassword,
-          realm: proxmoxRealm
-        });
 
         console.log('📋 Fetching all available servers from Proxmox...');
         let allServers = [];
@@ -1346,25 +1342,8 @@ async function startServer() {
     // Get clone options (nodes and storage) - protected
     app.get('/api/clone-options', verifyToken, async (req, res) => {
       try {
-        // Load Proxmox config from database
-        const proxmoxHost = await AppConfig.get('proxmox_host');
-        const proxmoxUsername = await AppConfig.get('proxmox_username');
-        const proxmoxPassword = await AppConfig.get('proxmox_password');
-        const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
-
-        if (!proxmoxHost || !proxmoxUsername || !proxmoxPassword) {
-          return res.status(400).json({
-            error: 'Proxmox not configured'
-          });
-        }
-
-        // Create Proxmox client with database config
-        const cloneProxmox = new ProxmoxClient({
-          host: proxmoxHost,
-          username: proxmoxUsername,
-          password: proxmoxPassword,
-          realm: proxmoxRealm
-        });
+        // Get Proxmox client with current config from database
+        const cloneProxmox = await getProxmoxClient();
 
         // Get nodes
         const nodes = await cloneProxmox.getNodes();
@@ -1492,6 +1471,7 @@ async function startServer() {
     // Get server details (protected)
     app.get('/api/servers/:vmid', verifyToken, async (req, res) => {
       try {
+        const proxmox = await getProxmoxClient();
         const server = await proxmox.getServerDetails(req.params.vmid);
         res.json(server);
       } catch (error) {
@@ -1554,27 +1534,18 @@ async function startServer() {
 
         const localIp = process.env.VELOCITY_BACKEND_NETWORK || '192.168.1';
 
-        // Load Proxmox config from database
-        const proxmoxHost = await AppConfig.get('proxmox_host');
-        const proxmoxUsername = await AppConfig.get('proxmox_username');
-        const proxmoxPassword = await AppConfig.get('proxmox_password');
-        const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
-
-        console.log(`📋 Clone: Proxmox config - host=${proxmoxHost}, user=${proxmoxUsername}, realm=${proxmoxRealm}, password=${proxmoxPassword ? '***SET***' : 'NOT SET'}`);
-
-        if (!proxmoxHost || !proxmoxUsername || !proxmoxPassword) {
+        // Get Proxmox client with current config from database
+        console.log('📋 Loading Proxmox client from database config...');
+        let cloneProxmox;
+        try {
+          cloneProxmox = await getProxmoxClient();
+          console.log('✓ Proxmox client loaded successfully');
+        } catch (error) {
+          console.log('❌ Proxmox not configured:', error.message);
           return res.status(400).json({
             error: 'Proxmox not configured. Configure Proxmox credentials in Admin Settings → Configuration.'
           });
         }
-
-        // Create Proxmox client with database config
-        const cloneProxmox = new ProxmoxClient({
-          host: proxmoxHost,
-          username: proxmoxUsername,
-          password: proxmoxPassword,
-          realm: proxmoxRealm
-        });
 
         console.log(`🔄 Attempting to clone VM ${sourceVmId} to ${domainName}...`);
 
@@ -2423,11 +2394,7 @@ async function startServer() {
 
         try {
           if (failedStep === 'dhcp_reservation' || !cloneStatus.dhcp_reserved) {
-            // Load config
-            const proxmoxHost = await AppConfig.get('proxmox_host');
-            const proxmoxUsername = await AppConfig.get('proxmox_username');
-            const proxmoxPassword = await AppConfig.get('proxmox_password');
-            const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
+            // Load router config
             const routerHost = await AppConfig.get('router_host');
             const routerUsername = await AppConfig.get('router_username');
             const routerPassword = await AppConfig.get('router_password');
@@ -2437,12 +2404,8 @@ async function startServer() {
               return res.status(400).json({ error: 'Router not configured for DHCP retry' });
             }
 
-            const currentProxmox = new ProxmoxClient({
-              host: proxmoxHost,
-              username: proxmoxUsername,
-              password: proxmoxPassword,
-              realm: proxmoxRealm
-            });
+            // Get Proxmox client
+            const currentProxmox = await getProxmoxClient();
 
             // Get MAC address and create reservation
             try {
@@ -2501,6 +2464,7 @@ async function startServer() {
           return res.status(403).json({ error: 'You do not have permission to start servers' });
         }
 
+        const proxmox = await getProxmoxClient();
         const result = await proxmox.startServer(req.params.vmid);
         res.json({ success: true, taskId: result });
       } catch (error) {
@@ -2515,6 +2479,7 @@ async function startServer() {
           return res.status(403).json({ error: 'You do not have permission to stop servers' });
         }
 
+        const proxmox = await getProxmoxClient();
         const result = await proxmox.stopServer(req.params.vmid);
         res.json({ success: true, taskId: result });
       } catch (error) {
@@ -2538,24 +2503,8 @@ async function startServer() {
           });
         }
 
-        // Load Proxmox config for MAC lookup
-        const proxmoxHost = await AppConfig.get('proxmox_host');
-        const proxmoxUsername = await AppConfig.get('proxmox_username');
-        const proxmoxPassword = await AppConfig.get('proxmox_password');
-        const proxmoxRealm = await AppConfig.get('proxmox_realm') || 'pam';
-
-        if (!proxmoxHost || !proxmoxUsername || !proxmoxPassword) {
-          return res.status(400).json({
-            error: 'Proxmox not configured'
-          });
-        }
-
-        const retryProxmox = new ProxmoxClient({
-          host: proxmoxHost,
-          username: proxmoxUsername,
-          password: proxmoxPassword,
-          realm: proxmoxRealm
-        });
+        // Get Proxmox client for MAC lookup
+        const retryProxmox = await getProxmoxClient();
 
         console.log(`🔄 Retrying MAC lookup for VM ${vmid}...`);
 
@@ -2661,6 +2610,7 @@ async function startServer() {
         }
 
         // Get server name before deletion (for velocity cleanup)
+        const proxmox = await getProxmoxClient();
         const servers = await proxmox.getServers();
         const server = servers.find(s => s.vmid === vmid);
         const serverName = server?.name;
@@ -2701,6 +2651,7 @@ async function startServer() {
     // Get task status (protected)
     app.get('/api/tasks/:taskId', verifyToken, async (req, res) => {
       try {
+        const proxmox = await getProxmoxClient();
         const status = await proxmox.getTaskStatus(req.params.taskId);
         res.json(status);
       } catch (error) {
@@ -3147,17 +3098,6 @@ async function startServer() {
     });
 
     // Get Minecraft server version
-    app.get('/api/servers/:vmid/minecraft/version', verifyToken, async (req, res) => {
-      try {
-        const vmid = parseInt(req.params.vmid);
-        const manager = await getMinecraftManager(vmid);
-        const version = await manager.getVersion();
-        res.json({ version });
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
-
     // Update Minecraft server version
     app.post('/api/servers/:vmid/minecraft/update-version', verifyToken, async (req, res) => {
       try {
