@@ -161,6 +161,30 @@ async function startServer() {
       });
     }
 
+    // Helper function to get DNS client with current configuration
+    async function getDNSClient() {
+      const host = await AppConfig.get('dns_host');
+      if (!host) {
+        // Return unconfigured client
+        return new DNSClient();
+      }
+      
+      const sshPort = await AppConfig.get('dns_ssh_port');
+      const sshUser = await AppConfig.get('dns_ssh_user');
+      const sshKeyPath = await AppConfig.get('dns_ssh_key');
+      const zone = await AppConfig.get('dns_zone');
+      const zoneFile = await AppConfig.get('dns_zone_file');
+      
+      return new DNSClient({
+        host,
+        port: sshPort ? parseInt(sshPort) : undefined,
+        username: sshUser,
+        privateKeyPath: sshKeyPath,
+        zone,
+        zoneFile
+      });
+    }
+
     // ============================================
     // API DOCUMENTATION
     // ============================================
@@ -585,7 +609,7 @@ async function startServer() {
     // Update configuration
     app.put('/api/admin/config', verifyToken, requireAdmin, async (req, res) => {
       try {
-        const { proxmox, velocity, node, router } = req.body;
+        const { proxmox, velocity, dns, node, router } = req.body;
 
         if (proxmox) {
           await AppConfig.set('proxmox_host', proxmox.host, req.user.userId, 'Proxmox server hostname');
@@ -606,6 +630,15 @@ async function startServer() {
           if (velocity.configPath) await AppConfig.set('velocity_config_path', velocity.configPath, req.user.userId, 'Velocity config file path');
           if (velocity.serviceName) await AppConfig.set('velocity_service_name', velocity.serviceName, req.user.userId, 'Velocity systemd service name');
           if (velocity.backendNetwork) await AppConfig.set('velocity_backend_network', velocity.backendNetwork, req.user.userId, 'Velocity backend network range');
+        }
+
+        if (dns) {
+          if (dns.host) await AppConfig.set('dns_host', dns.host, req.user.userId, 'DNS server hostname or IP');
+          if (dns.sshPort) await AppConfig.set('dns_ssh_port', dns.sshPort.toString(), req.user.userId, 'DNS SSH port');
+          if (dns.sshUser) await AppConfig.set('dns_ssh_user', dns.sshUser, req.user.userId, 'DNS SSH username');
+          if (dns.sshKeyPath) await AppConfig.set('dns_ssh_key', dns.sshKeyPath, req.user.userId, 'DNS SSH private key path');
+          if (dns.zone) await AppConfig.set('dns_zone', dns.zone, req.user.userId, 'DNS zone name');
+          if (dns.zoneFile) await AppConfig.set('dns_zone_file', dns.zoneFile, req.user.userId, 'DNS zone file path');
         }
 
         if (router) {
@@ -817,6 +850,174 @@ async function startServer() {
           sshKeyPath,
           message: hasKey ? 'SSH key is configured' : 'SSH key not found - password required for setup'
         });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Test DNS password authentication
+    app.post('/api/admin/config/test-dns-password', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { host, sshPort, sshUser, password } = req.body;
+
+        if (!host || !password) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'DNS host and password are required' 
+          });
+        }
+
+        try {
+          const SSH = require('ssh2').Client;
+          const ssh = new SSH();
+          
+          return new Promise((resolve, reject) => {
+            ssh.on('ready', () => {
+              ssh.end();
+              res.json({ 
+                success: true, 
+                message: 'Password authentication successful'
+              });
+              resolve();
+            });
+            ssh.on('error', (err) => {
+              res.json({ 
+                success: false, 
+                error: err.message 
+              });
+              resolve();
+            });
+            ssh.connect({
+              host,
+              port: sshPort || 22,
+              username: sshUser,
+              password,
+              readyTimeout: 5000
+            });
+          });
+        } catch (error) {
+          res.json({ 
+            success: false, 
+            error: error.message 
+          });
+        }
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Setup SSH key authentication for DNS
+    app.post('/api/admin/config/setup-dns-ssh', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { host, sshPort, sshUser, password, sshKeyPath, zone, zoneFile } = req.body;
+
+        if (!host || !password) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'DNS host and password are required' 
+          });
+        }
+
+        try {
+          console.log(`🔐 Setting up SSH key authentication for DNS ${host}...`);
+          
+          const dnsClient = new DNSClient({ 
+            host, 
+            port: sshPort || 22,
+            username: sshUser,
+            password,
+            privateKeyPath: sshKeyPath,
+            zone: zone,
+            zoneFile: zoneFile
+          });
+
+          // Setup SSH key authentication
+          await dnsClient.setupSSHKeyAuth();
+
+          res.json({ 
+            success: true, 
+            message: 'SSH key authentication configured successfully'
+          });
+        } catch (error) {
+          console.error('DNS SSH setup error:', error);
+          res.json({ 
+            success: false, 
+            error: error.message 
+          });
+        }
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Check SSH key status for DNS
+    app.get('/api/admin/config/dns-ssh-status', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const host = await AppConfig.get('dns_host');
+        if (!host) {
+          return res.json({ 
+            configured: false, 
+            hasSSHKey: false,
+            message: 'DNS not configured'
+          });
+        }
+
+        const sshKeyPath = await AppConfig.get('dns_ssh_key') || '/root/.ssh/id_rsa_dns';
+        const sshPort = await AppConfig.get('dns_ssh_port');
+        const sshUser = await AppConfig.get('dns_ssh_user');
+
+        const fs = require('fs');
+        const hasKey = fs.existsSync(sshKeyPath);
+
+        res.json({ 
+          configured: true,
+          hasSSHKey: hasKey,
+          host,
+          sshUser: sshUser,
+          sshKeyPath,
+          message: hasKey ? 'SSH key is configured' : 'SSH key not found - password required for setup'
+        });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Test DNS connection
+    app.post('/api/admin/config/test-dns', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { host, sshPort, sshUser, sshKeyPath, zone, zoneFile } = req.body;
+
+        if (!host) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'DNS host is required' 
+          });
+        }
+
+        try {
+          const dns = new DNSClient({ 
+            host, 
+            port: sshPort || 22,
+            username: sshUser,
+            privateKeyPath: sshKeyPath,
+            zone: zone,
+            zoneFile: zoneFile
+          });
+          
+          // Try to list records to test connection
+          const records = await dns.listARecords();
+          
+          res.json({ 
+            success: true, 
+            message: `DNS connection successful. Found ${records.length} A record(s).`,
+            records
+          });
+        } catch (error) {
+          res.json({ 
+            success: false, 
+            error: error.message 
+          });
+        }
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
       }
@@ -2106,7 +2307,7 @@ async function startServer() {
         });
 
         try {
-          const dns = new DNSClient();
+          const dns = await getDNSClient();
           if (dns.isConfigured() && assignedVmId) {
             const sshConfig = await ManagedServer.getSSHConfig(assignedVmId);
             if (sshConfig && sshConfig.ssh_host) {
@@ -2495,7 +2696,7 @@ async function startServer() {
 
         // Remove DNS record if configured
         try {
-          const dns = new DNSClient();
+          const dns = await getDNSClient();
           if (dns.isConfigured() && serverName) {
             const dnsResult = await dns.removeARecord(serverName);
             if (!dnsResult.success) {

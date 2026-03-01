@@ -1,19 +1,146 @@
 import SSHClient from './sshClient.js';
 import fs from 'fs';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import AppConfig from './models/appConfig.js';
+
+const execAsync = promisify(exec);
 
 class DNSClient {
   constructor(config = {}) {
     // DNS server connection details
-    this.host = config.host || process.env.DNS_HOST || '192.168.1.240';
+    this.host = config.host || process.env.DNS_HOST;
     this.port = config.port || process.env.DNS_PORT || 22;
-    this.username = config.username || process.env.DNS_USER || 'root';
-    this.zone = config.zone || process.env.DNS_ZONE || 'zanarkand.site';
-    this.zoneFile = config.zoneFile || process.env.DNS_ZONE_FILE || '/etc/bind/zones/zanarkand.site';
-    this.privateKeyPath = config.privateKeyPath || process.env.DNS_SSH_KEY || '/root/.ssh/id_rsa';
+    this.username = config.username || process.env.DNS_USER;
+    this.zone = config.zone || process.env.DNS_ZONE;
+    this.zoneFile = config.zoneFile || process.env.DNS_ZONE_FILE;
+    this.privateKeyPath = config.privateKeyPath || process.env.DNS_SSH_KEY;
+    this.password = config.password; // For initial setup
   }
 
   isConfigured() {
     return !!(this.host && this.zone);
+  }
+
+  /**
+   * Generate SSH key pair if it doesn't exist
+   */
+  async generateSSHKey() {
+    try {
+      // Check if key already exists
+      if (fs.existsSync(this.privateKeyPath)) {
+        console.log(`✓ SSH key already exists at ${this.privateKeyPath}`);
+        return;
+      }
+
+      console.log(`🔑 Generating SSH key pair at ${this.privateKeyPath}...`);
+      
+      // Ensure .ssh directory exists
+      const sshDir = this.privateKeyPath.substring(0, this.privateKeyPath.lastIndexOf('/'));
+      await execAsync(`mkdir -p ${sshDir} && chmod 700 ${sshDir}`);
+
+      // Generate RSA key pair without passphrase
+      await execAsync(
+        `ssh-keygen -t rsa -b 4096 -f ${this.privateKeyPath} -N "" -C "minecraft-manager-dns"`
+      );
+
+      console.log('✓ SSH key pair generated successfully');
+    } catch (error) {
+      throw new Error(`Failed to generate SSH key: ${error.message}`);
+    }
+  }
+
+  /**
+   * Setup SSH key authentication using password
+   */
+  async setupSSHKeyAuth() {
+    if (!this.password) {
+      throw new Error('Password is required for initial SSH key setup');
+    }
+
+    try {
+      // Generate key if it doesn't exist
+      await this.generateSSHKey();
+
+      // Read the public key
+      const publicKey = fs.readFileSync(`${this.privateKeyPath}.pub`, 'utf8').trim();
+
+      console.log(`🔐 Setting up SSH key authentication for ${this.username}@${this.host}...`);
+
+      // Use sshpass if available, otherwise provide instructions
+      try {
+        await execAsync(`which sshpass`);
+        // sshpass is available
+        const copyKeyCmd = `mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '${publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo SSH_KEY_INSTALLED`;
+        
+        const result = await execAsync(
+          `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "${copyKeyCmd}"`
+        );
+
+        if (result.stdout.includes('SSH_KEY_INSTALLED')) {
+          console.log('✓ SSH key installed on DNS server');
+          return { success: true, message: 'SSH key authentication configured' };
+        } else {
+          throw new Error('Key installation verification failed');
+        }
+      } catch (sshpassError) {
+        // sshpass not available, try alternative method
+        console.log('⚠️  sshpass not available, attempting alternative method...');
+        
+        // Install sshpass first
+        try {
+          await execAsync('apk add --no-cache sshpass');
+          console.log('✓ Installed sshpass');
+          
+          // Retry with sshpass
+          const copyKeyCmd = `mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '${publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo SSH_KEY_INSTALLED`;
+          
+          const result = await execAsync(
+            `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "${copyKeyCmd}"`
+          );
+
+          if (result.stdout.includes('SSH_KEY_INSTALLED')) {
+            console.log('✓ SSH key installed on DNS server');
+            return { success: true, message: 'SSH key authentication configured' };
+          }
+        } catch (installError) {
+          throw new Error(`Could not install sshpass or copy SSH key: ${installError.message}`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ SSH key setup failed:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Test connection with password (before key setup)
+   */
+  async testPasswordConnection() {
+    if (!this.password) {
+      throw new Error('Password is required');
+    }
+
+    try {
+      // Check if sshpass is available
+      try {
+        await execAsync('which sshpass');
+      } catch {
+        await execAsync('apk add --no-cache sshpass');
+      }
+
+      const result = await execAsync(
+        `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p ${this.port} ${this.username}@${this.host} "echo DNS_CONNECTION_OK"`
+      );
+
+      if (result.stdout.includes('DNS_CONNECTION_OK')) {
+        return { success: true, message: 'Password authentication successful' };
+      } else {
+        throw new Error('Connection test failed');
+      }
+    } catch (error) {
+      throw new Error(`Password authentication failed: ${error.message}`);
+    }
   }
 
   /**

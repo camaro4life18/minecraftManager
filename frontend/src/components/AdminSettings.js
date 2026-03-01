@@ -20,6 +20,16 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     backendNetwork: '192.168.1'
   });
 
+  const [dns, setDns] = useState({
+    host: '',
+    sshPort: 22,
+    sshUser: 'joseph',
+    password: '',
+    sshKeyPath: '/root/.ssh/id_rsa_dns',
+    zone: 'zanarkand.site',
+    zoneFile: '/var/lib/bind/zanarkand.site.hosts'
+  });
+
   const [router, setRouter] = useState({
     host: '',
     username: '',
@@ -36,10 +46,14 @@ function AdminSettings({ apiBase, token, isAdmin }) {
   const [settingUpVelocity, setSettingUpVelocity] = useState(false);
   const [velocitySSHStatus, setVelocitySSHStatus] = useState(null);
   const [testingRouter, setTestingRouter] = useState(false);
+  const [testingDns, setTestingDns] = useState(false);
+  const [settingUpDns, setSettingUpDns] = useState(false);
+  const [dnsSSHStatus, setDnsSSHStatus] = useState(null);
   const [proxmoxNodes, setProxmoxNodes] = useState([]);
   const [showPasswords, setShowPasswords] = useState({
     proxmoxPassword: false,
     velocityPassword: false,
+    dnsPassword: false,
     routerPassword: false
   });
   const [activeTab, setActiveTab] = useState('proxmox');
@@ -51,8 +65,9 @@ function AdminSettings({ apiBase, token, isAdmin }) {
   useEffect(() => {
     if (activeTab === 'velocity') {
       loadVelocitySSHStatus();
-    }
-  }, [activeTab])
+    }    if (activeTab === 'dns') {
+      loadDnsSSHStatus();
+    }  }, [activeTab])
 
 ;
 
@@ -67,6 +82,20 @@ function AdminSettings({ apiBase, token, isAdmin }) {
       }
     } catch (err) {
       console.error('Error loading Velocity SSH status:', err);
+    }
+  };
+
+  const loadDnsSSHStatus = async () => {
+    try {
+      const response = await fetch(`${apiBase}/api/admin/config/dns-ssh-status`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const status = await response.json();
+        setDnsSSHStatus(status);
+      }
+    } catch (err) {
+      console.error('Error loading DNS SSH status:', err);
     }
   };
 
@@ -109,6 +138,19 @@ function AdminSettings({ apiBase, token, isAdmin }) {
         }));
       }
 
+      // Load DNS config
+      if (config.dns_host) {
+        setDns(prev => ({
+          ...prev,
+          host: config.dns_host?.value || '',
+          sshPort: parseInt(config.dns_ssh_port?.value || 22),
+          sshUser: config.dns_ssh_user?.value || 'joseph',
+          sshKeyPath: config.dns_ssh_key?.value || '/root/.ssh/id_rsa_dns',
+          zone: config.dns_zone?.value || 'zanarkand.site',
+          zoneFile: config.dns_zone_file?.value || '/var/lib/bind/zanarkand.site.hosts'
+        }));
+      }
+
       // Load Router config
       if (config.router_host) {
         setRouter(prev => ({
@@ -138,6 +180,14 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     setVelocity(prev => ({
       ...prev,
       [name]: name === 'port' ? parseInt(value) : value
+    }));
+  };
+
+  const handleDnsChange = (e) => {
+    const { name, value } = e.target;
+    setDns(prev => ({
+      ...prev,
+      [name]: name === 'sshPort' ? parseInt(value) : value
     }));
   };
 
@@ -310,6 +360,131 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     }
   };
 
+  const testDnsPassword = async () => {
+    try {
+      setTestingDns(true);
+      setError(null);
+
+      if (!dns.password) {
+        setError('Password is required for testing');
+        setTestingDns(false);
+        return;
+      }
+
+      const response = await fetch(`${apiBase}/api/admin/config/test-dns-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          host: dns.host,
+          sshPort: dns.sshPort,
+          sshUser: dns.sshUser,
+          password: dns.password
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setSuccess('✓ Password authentication successful! You can now setup SSH keys.');
+      } else {
+        setError(`✗ Authentication failed: ${result.error}`);
+      }
+    } catch (err) {
+      setError(`Connection error: ${err.message}`);
+    } finally {
+      setTestingDns(false);
+    }
+  };
+
+  const setupDnsSSH = async () => {
+    try {
+      setSettingUpDns(true);
+      setError(null);
+      setSuccess(null);
+
+      if (!dns.host || !dns.password) {
+        setError('Host and password are required');
+        setSettingUpDns(false);
+        return;
+      }
+
+      console.log('Setting up SSH authentication for DNS...');
+
+      const response = await fetch(`${apiBase}/api/admin/config/setup-dns-ssh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          host: dns.host,
+          sshPort: dns.sshPort,
+          sshUser: dns.sshUser,
+          password: dns.password,
+          sshKeyPath: dns.sshKeyPath,
+          zone: dns.zone,
+          zoneFile: dns.zoneFile
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setSuccess(`✓ ${result.message}`);
+        // Clear password after successful setup
+        setDns(prev => ({ ...prev, password: '' }));
+        // Reload SSH status
+        await loadDnsSSHStatus();
+        // Now save the configuration
+        await saveDnsConfig();
+      } else {
+        setError(`✗ Setup failed: ${result.error}`);
+      }
+    } catch (err) {
+      setError(`Setup error: ${err.message}`);
+    } finally {
+      setSettingUpDns(false);
+    }
+  };
+
+  const testDnsConnection = async () => {
+    try {
+      setTestingDns(true);
+      setError(null);
+
+      const response = await fetch(`${apiBase}/api/admin/config/test-dns`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          host: dns.host,
+          sshPort: dns.sshPort,
+          sshUser: dns.sshUser,
+          sshKeyPath: dns.sshKeyPath,
+          zone: dns.zone,
+          zoneFile: dns.zoneFile
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setSuccess('✓ DNS connection successful');
+      } else {
+        setError(`✗ Connection failed: ${result.error}`);
+      }
+    } catch (err) {
+      setError(`Connection error: ${err.message}`);
+    } finally {
+      setTestingDns(false);
+    }
+  };
+
   const testRouterConnection = async () => {
     try {
       setTestingRouter(true);
@@ -437,6 +612,50 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     }
   };
 
+  const saveDnsConfig = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+
+      if (!dns.host) {
+        setError('DNS host is required');
+        setLoading(false);
+        return;
+      }
+
+      const response = await fetch(`${apiBase}/api/admin/config`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          dns: {
+            host: dns.host,
+            sshPort: dns.sshPort,
+            sshUser: dns.sshUser,
+            sshKeyPath: dns.sshKeyPath,
+            zone: dns.zone,
+            zoneFile: dns.zoneFile
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to save DNS configuration');
+      }
+
+      setSuccess('✓ DNS configuration saved successfully');
+      setTimeout(() => setSuccess(null), 5000);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const saveRouterConfig = async () => {
     try {
       setLoading(true);
@@ -508,6 +727,12 @@ function AdminSettings({ apiBase, token, isAdmin }) {
           onClick={() => setActiveTab('velocity')}
         >
           Velocity Configuration
+        </button>
+        <button
+          className={`tab-button ${activeTab === 'dns' ? 'active' : ''}`}
+          onClick={() => setActiveTab('dns')}
+        >
+          DNS Configuration
         </button>
         <button
           className={`tab-button ${activeTab === 'router' ? 'active' : ''}`}
@@ -823,6 +1048,180 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                       className="btn-primary"
                       onClick={saveVelocityConfig}
                       disabled={loading || !velocity.host}
+                    >
+                      {loading ? 'Saving...' : '💾 Save Configuration'}
+                    </button>
+                  </>
+                )}
+              </div>
+            </form>
+          </div>
+        )}
+
+        {activeTab === 'dns' && (
+          <div className="settings-section">
+            <h3>DNS Server Configuration (Optional)</h3>
+            <p className="section-description">
+              Configure BIND DNS server for automatic DNS record management. The system will update zone files when servers are cloned. Leave blank to skip this integration.
+            </p>
+
+            <form className="settings-form">
+              <div className="form-group">
+                <label htmlFor="dns-host">DNS Host/IP:</label>
+                <input
+                  type="text"
+                  id="dns-host"
+                  name="host"
+                  value={dns.host}
+                  onChange={handleDnsChange}
+                  placeholder="e.g., dns.example.com or 192.168.1.240"
+                  disabled={loading}
+                />
+                <small>The hostname or IP address of your BIND DNS server</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="dns-ssh-port">SSH Port:</label>
+                <input
+                  type="number"
+                  id="dns-ssh-port"
+                  name="sshPort"
+                  value={dns.sshPort}
+                  onChange={handleDnsChange}
+                  placeholder="22"
+                  disabled={loading}
+                />
+                <small>SSH port for connecting to DNS server (default: 22)</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="dns-ssh-user">SSH Username:</label>
+                <input
+                  type="text"
+                  id="dns-ssh-user"
+                  name="sshUser"
+                  value={dns.sshUser}
+                  onChange={handleDnsChange}
+                  placeholder="joseph"
+                  disabled={loading}
+                />
+                <small>SSH username for connecting to DNS server</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="dns-password">
+                  SSH Password:
+                  <button
+                    type="button"
+                    className="show-password-btn"
+                    onClick={() => setShowPasswords(prev => ({
+                      ...prev,
+                      dnsPassword: !prev.dnsPassword
+                    }))}
+                  >
+                    {showPasswords.dnsPassword ? '🙈' : '👁️'}
+                  </button>
+                </label>
+                <input
+                  type={showPasswords.dnsPassword ? 'text' : 'password'}
+                  id="dns-password"
+                  name="password"
+                  value={dns.password}
+                  onChange={handleDnsChange}
+                  placeholder="Password for initial SSH key setup"
+                  disabled={loading}
+                />
+                <small>
+                  {dnsSSHStatus?.hasSSHKey 
+                    ? '✓ SSH key is configured. Password only needed if regenerating key.' 
+                    : '⚠️ Password required for initial SSH key setup'}
+                </small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="dns-ssh-key">SSH Private Key Path:</label>
+                <input
+                  type="text"
+                  id="dns-ssh-key"
+                  name="sshKeyPath"
+                  value={dns.sshKeyPath}
+                  onChange={handleDnsChange}
+                  placeholder="/root/.ssh/id_rsa_dns"
+                  disabled={loading}
+                />
+                <small>Path to SSH private key on the backend container (auto-generated)</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="dns-zone">DNS Zone:</label>
+                <input
+                  type="text"
+                  id="dns-zone"
+                  name="zone"
+                  value={dns.zone}
+                  onChange={handleDnsChange}
+                  placeholder="zanarkand.site"
+                  disabled={loading}
+                />
+                <small>Zone name managed on the DNS server (e.g., zanarkand.site)</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="dns-zone-file">Zone File Path:</label>
+                <input
+                  type="text"
+                  id="dns-zone-file"
+                  name="zoneFile"
+                  value={dns.zoneFile}
+                  onChange={handleDnsChange}
+                  placeholder="/var/lib/bind/zanarkand.site.hosts"
+                  disabled={loading}
+                />
+                <small>Path to zone file on the DNS server</small>
+              </div>
+
+              {dnsSSHStatus && (
+                <div className="config-status">
+                  <strong>SSH Status:</strong> {dnsSSHStatus.hasSSHKey ? '✓ Key configured' : '⚠️ Key not found'}
+                </div>
+              )}
+
+              <div className="form-actions">
+                {!dnsSSHStatus?.hasSSHKey && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-test"
+                      onClick={testDnsPassword}
+                      disabled={loading || testingDns || !dns.host || !dns.password}
+                    >
+                      {testingDns ? 'Testing...' : '🔐 Test Password'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={setupDnsSSH}
+                      disabled={loading || settingUpDns || testingDns || !dns.host || !dns.password}
+                    >
+                      {settingUpDns ? 'Setting up...' : '🔑 Setup SSH Authentication'}
+                    </button>
+                  </>
+                )}
+                {dnsSSHStatus?.hasSSHKey && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-test"
+                      onClick={testDnsConnection}
+                      disabled={loading || testingDns || !dns.host}
+                    >
+                      {testingDns ? 'Testing...' : '🔗 Test SSH Connection'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={saveDnsConfig}
+                      disabled={loading || !dns.host}
                     >
                       {loading ? 'Saving...' : '💾 Save Configuration'}
                     </button>
