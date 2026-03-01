@@ -12,7 +12,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
   const [velocity, setVelocity] = useState({
     host: '',
     sshPort: 22,
-    sshUser: 'joseph',
+    sshUser: 'user',
     password: '',
     sshKeyPath: '/root/.ssh/id_rsa_velocity',
     configPath: '/opt/velocity-proxy/velocity.toml',
@@ -23,7 +23,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
   const [dns, setDns] = useState({
     host: '',
     sshPort: 22,
-    sshUser: 'joseph',
+    sshUser: 'user',
     password: '',
     sshKeyPath: '/root/.ssh/id_rsa_dns',
     zone: 'zanarkand.site',
