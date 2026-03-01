@@ -8,7 +8,6 @@ import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import multer from 'multer';
 import path from 'path';
-import { Client as SSH2Client } from 'ssh2';
 import ProxmoxClient from './proxmoxClient.js';
 import VelocityClient from './velocityClient.js';
 import DNSClient from './dnsClient.js';
@@ -869,31 +868,17 @@ async function startServer() {
         }
 
         try {
-          const ssh = new SSH2Client();
+          const testDns = new DNSClient({ 
+            host, 
+            port: sshPort || 22,
+            username: sshUser,
+            password
+          });
+          await testDns.testPasswordConnection();
           
-          return new Promise((resolve, reject) => {
-            ssh.on('ready', () => {
-              ssh.end();
-              res.json({ 
-                success: true, 
-                message: 'Password authentication successful'
-              });
-              resolve();
-            });
-            ssh.on('error', (err) => {
-              res.json({ 
-                success: false, 
-                error: err.message 
-              });
-              resolve();
-            });
-            ssh.connect({
-              host,
-              port: sshPort || 22,
-              username: sshUser,
-              password,
-              readyTimeout: 5000
-            });
+          res.json({ 
+            success: true, 
+            message: 'Password authentication successful'
           });
         } catch (error) {
           res.json({ 
