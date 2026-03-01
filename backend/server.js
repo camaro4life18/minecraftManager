@@ -8,6 +8,7 @@ import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import multer from 'multer';
 import path from 'path';
+import { Client as SSH2Client } from 'ssh2';
 import ProxmoxClient from './proxmoxClient.js';
 import VelocityClient from './velocityClient.js';
 import DNSClient from './dnsClient.js';
@@ -868,8 +869,7 @@ async function startServer() {
         }
 
         try {
-          const SSH = require('ssh2').Client;
-          const ssh = new SSH();
+          const ssh = new SSH2Client();
           
           return new Promise((resolve, reject) => {
             ssh.on('ready', () => {
