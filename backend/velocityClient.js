@@ -87,7 +87,6 @@ class VelocityClient {
       console.log(`🔐 Setting up SSH key authentication for ${this.username}@${this.host}...`);
 
       // Use sshpass to copy the key to remote host
-      // First, check if sshpass is available, if not use ssh-copy-id with expect
       const copyKeyCmd = `
         mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
         echo '${publicKey}' >> ~/.ssh/authorized_keys && \
@@ -100,7 +99,8 @@ class VelocityClient {
         await execAsync(`which sshpass`);
         // sshpass is available
         const result = await execAsync(
-          `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "${copyKeyCmd}"`
+          `sshpass -p "${this.password}" ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} '${copyKeyCmd}'`,
+          { shell: '/bin/sh' }
         );
 
         if (result.stdout.includes('SSH_KEY_INSTALLED')) {
@@ -120,7 +120,8 @@ class VelocityClient {
           
           // Retry with sshpass
           const result = await execAsync(
-            `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "${copyKeyCmd}"`
+            `sshpass -p "${this.password}" ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} '${copyKeyCmd}'`,
+            { shell: '/bin/sh' }
           );
 
           if (result.stdout.includes('SSH_KEY_INSTALLED')) {
@@ -154,7 +155,8 @@ class VelocityClient {
       }
 
       const result = await execAsync(
-        `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "echo CONNECTION_OK"`
+        `sshpass -p "${this.password}" ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} 'echo CONNECTION_OK'`,
+        { shell: '/bin/sh' }
       );
 
       if (result.stdout.includes('CONNECTION_OK')) {
