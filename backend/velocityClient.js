@@ -86,21 +86,14 @@ class VelocityClient {
 
       console.log(`🔐 Setting up SSH key authentication for ${this.username}@${this.host}...`);
 
-      // Use sshpass to copy the key to remote host
-      const copyKeyCmd = `
-        mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
-        echo '${publicKey}' >> ~/.ssh/authorized_keys && \
-        chmod 600 ~/.ssh/authorized_keys && \
-        echo "SSH_KEY_INSTALLED"
-      `;
-
       // Use sshpass if available, otherwise provide instructions
       try {
         await execAsync(`which sshpass`);
         // sshpass is available
+        const copyKeyCmd = `mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '${publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo SSH_KEY_INSTALLED`;
+        
         const result = await execAsync(
-          `sshpass -p "${this.password}" ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} '${copyKeyCmd}'`,
-          { shell: '/bin/sh' }
+          `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "${copyKeyCmd}"`
         );
 
         if (result.stdout.includes('SSH_KEY_INSTALLED')) {
@@ -119,9 +112,10 @@ class VelocityClient {
           console.log('✓ Installed sshpass');
           
           // Retry with sshpass
+          const copyKeyCmd = `mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '${publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo SSH_KEY_INSTALLED`;
+          
           const result = await execAsync(
-            `sshpass -p "${this.password}" ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} '${copyKeyCmd}'`,
-            { shell: '/bin/sh' }
+            `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "${copyKeyCmd}"`
           );
 
           if (result.stdout.includes('SSH_KEY_INSTALLED')) {
@@ -155,8 +149,7 @@ class VelocityClient {
       }
 
       const result = await execAsync(
-        `sshpass -p "${this.password}" ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} 'echo CONNECTION_OK'`,
-        { shell: '/bin/sh' }
+        `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "echo CONNECTION_OK"`
       );
 
       if (result.stdout.includes('CONNECTION_OK')) {
