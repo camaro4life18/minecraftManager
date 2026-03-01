@@ -3,8 +3,8 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# Install netcat for database connectivity checks
-RUN apk add --no-cache netcat-openbsd bash
+# Install netcat for database connectivity checks, openssh-client for SSH/sshpass, bash
+RUN apk add --no-cache netcat-openbsd bash openssh-client
 
 # Copy package files
 COPY package*.json ./
