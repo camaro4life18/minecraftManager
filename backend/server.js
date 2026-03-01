@@ -10,6 +10,7 @@ import multer from 'multer';
 import path from 'path';
 import ProxmoxClient from './proxmoxClient.js';
 import VelocityClient from './velocityClient.js';
+import DNSClient from './dnsClient.js';
 import SSHClient, { MinecraftServerManager } from './sshClient.js';
 import { 
   initializeDatabase, 
@@ -2095,6 +2096,35 @@ async function startServer() {
           }
         }
 
+        // Try to add DNS record (optional - won't fail clone if it fails)
+        setLiveCloneProgress(clientRequestId, {
+          userId: req.user.userId,
+          status: 'in-progress',
+          currentStep: 'configuring-dns',
+          progressPercent: 95,
+          message: 'Adding DNS record...'
+        });
+
+        try {
+          const dns = new DNSClient();
+          if (dns.isConfigured() && assignedVmId) {
+            const sshConfig = await ManagedServer.getSSHConfig(assignedVmId);
+            if (sshConfig && sshConfig.ssh_host) {
+              const serverIp = sshConfig.ssh_host;
+              console.log(`📝 Adding DNS record: ${domainName} -> ${serverIp}`);
+              
+              const dnsResult = await dns.addARecord(domainName, serverIp);
+              if (dnsResult.success) {
+                console.log(`✅ Added DNS record successfully`);
+              } else {
+                console.warn(`⚠️  Could not add DNS record, but VM clone succeeded: ${dnsResult.message}`);
+              }
+            }
+          }
+        } catch (dnsError) {
+          console.warn(`⚠️  Error during DNS registration: ${dnsError.message}`);
+        }
+
         // Mark clone as completed
         await CloneStatus.markComplete(assignedVmId);
 
@@ -2461,6 +2491,19 @@ async function startServer() {
           if (!velocityResult.success) {
             console.warn(`⚠️  Could not remove from velocity, but VM deletion succeeded: ${velocityResult.message}`);
           }
+        }
+
+        // Remove DNS record if configured
+        try {
+          const dns = new DNSClient();
+          if (dns.isConfigured() && serverName) {
+            const dnsResult = await dns.removeARecord(serverName);
+            if (!dnsResult.success) {
+              console.warn(`⚠️  Could not remove DNS record, but VM deletion succeeded: ${dnsResult.message}`);
+            }
+          }
+        } catch (dnsError) {
+          console.warn(`⚠️  Error removing DNS record: ${dnsError.message}`);
         }
         
         res.json({ success: true, taskId: result });
