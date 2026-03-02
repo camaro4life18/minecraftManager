@@ -14,7 +14,7 @@ class VelocityClient {
     this.port = config.port || process.env.VELOCITY_SSH_PORT || 22;
     this.username = config.username || process.env.VELOCITY_SSH_USER || 'joseph';
     this.password = config.password; // For initial setup only
-    this.privateKeyPath = config.privateKeyPath || process.env.VELOCITY_SSH_KEY || '/root/.ssh/id_rsa_velocity';
+    this.privateKeyPath = config.privateKeyPath || process.env.VELOCITY_SSH_KEY || '~/.ssh/id_rsa';
     this.privateKey = config.privateKey;  // Allow private key to be passed directly from database
     this.velocityConfigPath = config.configPath || process.env.VELOCITY_CONFIG_PATH || '/opt/velocity-proxy/velocity.toml';
     this.velocityServiceName = config.serviceName || process.env.VELOCITY_SERVICE_NAME || 'velocity';

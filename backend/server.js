@@ -727,7 +727,7 @@ async function startServer() {
             host, 
             port: sshPort || 22,
             username: sshUser || 'joseph',
-            privateKeyPath: sshKeyPath || '/root/.ssh/id_rsa_velocity',
+            privateKeyPath: sshKeyPath || '~/.ssh/id_rsa',
             configPath: configPath || '/opt/velocity-proxy/velocity.toml',
             serviceName: serviceName || 'velocity'
           });
@@ -805,7 +805,7 @@ async function startServer() {
             port: sshPort || 22,
             username: sshUser || 'joseph',
             password,
-            privateKeyPath: sshKeyPath || '/root/.ssh/id_rsa_velocity',
+            privateKeyPath: sshKeyPath || '~/.ssh/id_rsa',
             configPath: configPath || '/opt/velocity-proxy/velocity.toml',
             serviceName: serviceName || 'velocity'
           });
@@ -845,7 +845,7 @@ async function startServer() {
           });
         }
 
-        const sshKeyPath = await AppConfig.get('velocity_ssh_key') || '/root/.ssh/id_rsa_velocity';
+        const sshKeyPath = await AppConfig.get('velocity_ssh_key') || '~/.ssh/id_rsa';
         const sshPort = await AppConfig.get('velocity_ssh_port');
         const sshUser = await AppConfig.get('velocity_ssh_user');
 
@@ -1004,7 +1004,7 @@ async function startServer() {
           console.log(`🔐 Retrieving DNS private key from ${sshUser}@${host}...`);
           
           // Use sshpass to read the private key from remote server's user home directory
-          const keyPath = remoteKeyPath || '~/.ssh/id_rsa_dns';
+          const keyPath = remoteKeyPath || '~/.ssh/id_rsa';
           const cmd = `sshpass -p "${password}" ssh -o StrictHostKeyChecking=no -p ${sshPort} ${sshUser}@${host} "cat ${keyPath}"`;
           
           const { stdout } = await execAsync(cmd);
@@ -1054,7 +1054,7 @@ async function startServer() {
           console.log(`🔐 Retrieving Velocity private key from ${sshUser}@${host}...`);
           
           // Use sshpass to read the private key from remote server's user home directory
-          const keyPath = remoteKeyPath || '~/.ssh/id_rsa_velocity';
+          const keyPath = remoteKeyPath || '~/.ssh/id_rsa';
           const cmd = `sshpass -p "${password}" ssh -o StrictHostKeyChecking=no -p ${sshPort} ${sshUser}@${host} "cat ${keyPath}"`;
           
           const { stdout } = await execAsync(cmd);
