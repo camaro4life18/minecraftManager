@@ -1,175 +1,28 @@
-import SSHClient from './sshClient.js';
+import RemoteServiceClient from './remoteServiceClient.js';
 import dotenv from 'dotenv';
-import fs from 'fs';
-import { promisify } from 'util';
-import { exec } from 'child_process';
 
-const execAsync = promisify(exec);
 dotenv.config();
 
-class VelocityClient {
+class VelocityClient extends RemoteServiceClient {
   constructor(config = {}) {
-    // SSH connection details for Velocity server
-    this.host = config.host || process.env.VELOCITY_HOST;
-    this.port = config.port || process.env.VELOCITY_SSH_PORT || 22;
-    this.username = config.username || process.env.VELOCITY_SSH_USER || 'joseph';
-    this.password = config.password; // For initial setup only
-    this.privateKeyPath = config.privateKeyPath || process.env.VELOCITY_SSH_KEY || '~/.ssh/id_rsa';
-    this.privateKey = config.privateKey;  // Allow private key to be passed directly from database
+    // Initialize base class with SSH config
+    super({
+      host: config.host || process.env.VELOCITY_HOST,
+      port: config.port || process.env.VELOCITY_SSH_PORT || 22,
+      username: config.username || process.env.VELOCITY_SSH_USER,
+      password: config.password,
+      privateKeyPath: config.privateKeyPath || process.env.VELOCITY_SSH_KEY || '~/.ssh/id_rsa',
+      privateKey: config.privateKey,
+      serviceId: 'velocity'
+    });
+
+    // Velocity-specific configuration
     this.velocityConfigPath = config.configPath || process.env.VELOCITY_CONFIG_PATH || '/opt/velocity-proxy/velocity.toml';
     this.velocityServiceName = config.serviceName || process.env.VELOCITY_SERVICE_NAME || 'velocity';
   }
 
   isConfigured() {
     return !!(this.host);
-  }
-
-  /**
-   * Check if SSH key exists
-   */
-  hasSSHKey() {
-    try {
-      return fs.existsSync(this.privateKeyPath) && fs.existsSync(`${this.privateKeyPath}.pub`);
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Generate SSH key pair if it doesn't exist
-   */
-  async generateSSHKey() {
-    try {
-      // Use temp file for key generation since container storage is not persistent
-      const tempKeyPath = `/tmp/velocity_ssh_key_${Date.now()}.key`;
-      
-      console.log(`🔑 Generating SSH key pair at ${tempKeyPath}...`);
-      
-      // Generate RSA key pair without passphrase
-      await execAsync(
-        `ssh-keygen -t rsa -b 4096 -f "${tempKeyPath}" -N "" -C "velocity-manager@minecraft-web"`
-      );
-
-      console.log('✓ SSH key pair generated successfully');
-      return tempKeyPath;
-    } catch (error) {
-      throw new Error(`SSH key generation failed: ${error.message}`);
-    }
-  }
-
-  /**
-   * Setup SSH key authentication using password
-   */
-  async setupSSHKeyAuth() {
-    if (!this.password) {
-      throw new Error('Password is required for initial SSH key setup');
-    }
-
-    let tempKeyPath = null;
-
-    try {
-      // Generate a temporary SSH key
-      tempKeyPath = await this.generateSSHKey();
-
-      // Read the public key
-      const publicKey = fs.readFileSync(`${tempKeyPath}.pub`, 'utf8').trim();
-
-      console.log(`🔐 Setting up SSH key authentication for ${this.username}@${this.host}...`);
-
-      // Ensure sshpass is available
-      try {
-        await execAsync(`which sshpass`);
-      } catch {
-        console.log('📦 Installing sshpass...');
-        await execAsync('apk add --no-cache sshpass');
-      }
-
-      // Use sshpass to copy public key to Velocity server
-      const copyKeyCmd = `mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '${publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo SSH_KEY_INSTALLED`;
-      
-      const result = await execAsync(
-        `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "${copyKeyCmd}"`
-      );
-
-      if (!result.stdout.includes('SSH_KEY_INSTALLED')) {
-        throw new Error('Key installation verification failed');
-      }
-
-      console.log('✓ SSH key installed on Velocity server');
-      return { success: true, message: 'SSH key authentication configured. Now retrieve and store the private key via /api/admin/config/store-velocity-ssh-key' };
-    } catch (error) {
-      console.error('❌ SSH key setup failed:', error.message);
-      throw error;
-    } finally {
-      // Clean up temporary key files
-      if (tempKeyPath) {
-        try {
-          await execAsync(`rm -f "${tempKeyPath}" "${tempKeyPath}.pub"`);
-          console.log('✓ Cleaned up temporary SSH key files');
-        } catch (cleanupError) {
-          console.warn('⚠️  Failed to clean up temporary SSH key files:', cleanupError.message);
-        }
-      }
-    }
-  }
-
-  /**
-   * Test connection with password (before key setup)
-   */
-  async testPasswordConnection() {
-    if (!this.password) {
-      throw new Error('Password is required');
-    }
-
-    try {
-      // Check if sshpass is available
-      try {
-        await execAsync('which sshpass');
-      } catch {
-        await execAsync('apk add --no-cache sshpass');
-      }
-
-      const result = await execAsync(
-        `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "echo CONNECTION_OK"`
-      );
-
-      if (result.stdout.includes('CONNECTION_OK')) {
-        return { success: true, message: 'Password authentication successful' };
-      } else {
-        throw new Error('Connection test failed');
-      }
-    } catch (error) {
-      throw new Error(`Password authentication failed: ${error.message}`);
-    }
-  }
-
-  /**
-   * Get SSH client for Velocity server
-   */
-  _getSSHClient() {
-    let privateKey;
-    
-    // Try database-stored private key first
-    if (this.privateKey) {
-      console.log(`✓ Using Velocity private key from database`);
-      privateKey = this.privateKey;
-    } else if (this.privateKeyPath) {
-      console.log(`📖 Reading Velocity private key from file: ${this.privateKeyPath}`);
-      try {
-        privateKey = fs.readFileSync(this.privateKeyPath, 'utf8');
-      } catch (error) {
-        throw new Error(`Cannot read SSH private key at ${this.privateKeyPath}: ${error.message}`);
-      }
-    } else {
-      throw new Error(`No Velocity SSH private key available`);
-    }
-
-    return new SSHClient({
-      host: this.host,
-      port: this.port,
-      username: this.username,
-      privateKey: privateKey
-    });
   }
 
   /**

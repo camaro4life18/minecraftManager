@@ -1,168 +1,30 @@
-import SSHClient from './sshClient.js';
+import RemoteServiceClient from './remoteServiceClient.js';
 import fs from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
-class DNSClient {
+class DNSClient extends RemoteServiceClient {
   constructor(config = {}) {
-    // DNS server connection details
-    this.host = config.host || process.env.DNS_HOST;
-    this.port = config.port || process.env.DNS_PORT || 22;
-    this.username = config.username || process.env.DNS_USER;
+    // Initialize base class with SSH config
+    super({
+      host: config.host || process.env.DNS_HOST,
+      port: config.port || process.env.DNS_PORT || 22,
+      username: config.username || process.env.DNS_USER,
+      password: config.password,
+      privateKeyPath: config.privateKeyPath || process.env.DNS_SSH_KEY,
+      privateKey: config.privateKey,
+      serviceId: 'dns'
+    });
+
+    // DNS-specific configuration
     this.zone = config.zone || process.env.DNS_ZONE;
     this.zoneFile = config.zoneFile || process.env.DNS_ZONE_FILE;
-    this.privateKeyPath = config.privateKeyPath || process.env.DNS_SSH_KEY;
-    this.privateKey = config.privateKey;  // Allow private key to be passed directly
-    this.password = config.password; // For initial setup
   }
 
   isConfigured() {
     return !!(this.host && this.zone);
-  }
-
-  /**
-   * Generate SSH key pair if it doesn't exist
-   */
-  async generateSSHKey() {
-    try {
-      // Use temp file for key generation since /root/.ssh is not persistent in container
-      const tempKeyPath = `/tmp/dns_ssh_key_${Date.now()}.key`;
-      
-      console.log(`🔑 Generating SSH key pair at ${tempKeyPath}...`);
-      
-      // Generate RSA key pair without passphrase
-      await execAsync(
-        `ssh-keygen -t rsa -b 4096 -f "${tempKeyPath}" -N "" -C "minecraft-manager-dns"`
-      );
-
-      console.log('✓ SSH key pair generated successfully');
-      return tempKeyPath;
-    } catch (error) {
-      throw new Error(`SSH key generation failed: ${error.message}`);
-    }
-  }
-
-  /**
-   * Setup SSH key authentication using password
-   */
-  async setupSSHKeyAuth() {
-    if (!this.password) {
-      throw new Error('Password is required for initial SSH key setup');
-    }
-
-    let tempKeyPath = null;
-
-    try {
-      // Generate a temporary SSH key
-      tempKeyPath = await this.generateSSHKey();
-
-      // Read the public key
-      const publicKey = fs.readFileSync(`${tempKeyPath}.pub`, 'utf8').trim();
-
-      console.log(`🔐 Setting up SSH key authentication for ${this.username}@${this.host}...`);
-
-      // Ensure sshpass is available
-      try {
-        await execAsync(`which sshpass`);
-      } catch {
-        console.log('📦 Installing sshpass...');
-        await execAsync('apk add --no-cache sshpass');
-      }
-
-      // Use sshpass to copy public key to DNS server
-      const copyKeyCmd = `mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '${publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo SSH_KEY_INSTALLED`;
-      
-      const result = await execAsync(
-        `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -p ${this.port} ${this.username}@${this.host} "${copyKeyCmd}"`
-      );
-
-      if (!result.stdout.includes('SSH_KEY_INSTALLED')) {
-        throw new Error('Key installation verification failed');
-      }
-
-      console.log('✓ SSH key installed on DNS server');
-
-      // Step 2: Retrieve the private key from DNS server and store in database
-      // This is done via a separate endpoint call, not here
-      // For now, user should call /api/admin/config/store-dns-ssh-key
-
-      return { success: true, message: 'SSH key authentication configured. Now retrieve and store the private key via /api/admin/config/store-dns-ssh-key' };
-    } catch (error) {
-      console.error('❌ SSH key setup failed:', error.message);
-      throw error;
-    } finally {
-      // Clean up temporary key files
-      if (tempKeyPath) {
-        try {
-          await execAsync(`rm -f "${tempKeyPath}" "${tempKeyPath}.pub"`);
-          console.log('✓ Cleaned up temporary SSH key files');
-        } catch (cleanupError) {
-          console.warn('⚠️  Failed to clean up temporary SSH key files:', cleanupError.message);
-        }
-      }
-    }
-  }
-
-  /**
-   * Test connection with password (before key setup)
-   */
-  async testPasswordConnection() {
-    if (!this.password) {
-      throw new Error('Password is required');
-    }
-
-    try {
-      // Check if sshpass is available
-      try {
-        await execAsync('which sshpass');
-      } catch {
-        await execAsync('apk add --no-cache sshpass');
-      }
-
-      const result = await execAsync(
-        `sshpass -p '${this.password}' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p ${this.port} ${this.username}@${this.host} "echo DNS_CONNECTION_OK"`
-      );
-
-      if (result.stdout.includes('DNS_CONNECTION_OK')) {
-        return { success: true, message: 'Password authentication successful' };
-      } else {
-        throw new Error('Connection test failed');
-      }
-    } catch (error) {
-      throw new Error(`Password authentication failed: ${error.message}`);
-    }
-  }
-
-  /**
-   * Get SSH client for DNS server
-   */
-  _getSSHClient() {
-    let privateKey;
-    
-    // Try to use private key from config first (from database)
-    if (this.privateKey) {
-      console.log(`✓ Using DNS private key from database`);
-      privateKey = this.privateKey;
-    } else if (this.privateKeyPath) {
-      // Fall back to reading from file
-      console.log(`📖 Reading DNS private key from file: ${this.privateKeyPath}`);
-      try {
-        privateKey = fs.readFileSync(this.privateKeyPath, 'utf8');
-      } catch (error) {
-        throw new Error(`Cannot read SSH private key at ${this.privateKeyPath}: ${error.message}`);
-      }
-    } else {
-      throw new Error(`No DNS SSH private key available (not in database or file)`);
-    }
-
-    return new SSHClient({
-      host: this.host,
-      port: this.port,
-      username: this.username,
-      privateKey: privateKey
-    });
   }
 
   /**
