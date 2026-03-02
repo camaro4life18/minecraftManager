@@ -180,14 +180,18 @@ async function startServer() {
       const sshPort = await AppConfig.get('dns_ssh_port');
       const sshUser = await AppConfig.get('dns_ssh_user');
       const sshKeyPath = await AppConfig.get('dns_ssh_key');
+      const sshPrivateKey = await AppConfig.get('dns_ssh_private_key');
       const zone = await AppConfig.get('dns_zone');
       const zoneFile = await AppConfig.get('dns_zone_file');
+      
+      console.log(`🔐 Loading DNS client: host=${host}, user=${sshUser}, keyPath=${sshKeyPath}, hasPrivateKey=${!!sshPrivateKey}`);
       
       return new DNSClient({
         host,
         port: sshPort ? parseInt(sshPort) : undefined,
         username: sshUser,
         privateKeyPath: sshKeyPath,
+        privateKey: sshPrivateKey,
         zone,
         zoneFile
       });

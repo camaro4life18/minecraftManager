@@ -14,6 +14,7 @@ class DNSClient {
     this.zone = config.zone || process.env.DNS_ZONE;
     this.zoneFile = config.zoneFile || process.env.DNS_ZONE_FILE;
     this.privateKeyPath = config.privateKeyPath || process.env.DNS_SSH_KEY;
+    this.privateKey = config.privateKey;  // Allow private key to be passed directly
     this.password = config.password; // For initial setup
   }
 
@@ -147,10 +148,21 @@ class DNSClient {
    */
   _getSSHClient() {
     let privateKey;
-    try {
-      privateKey = fs.readFileSync(this.privateKeyPath, 'utf8');
-    } catch (error) {
-      throw new Error(`Cannot read SSH private key at ${this.privateKeyPath}: ${error.message}`);
+    
+    // Try to use private key from config first (from database)
+    if (this.privateKey) {
+      console.log(`✓ Using DNS private key from database`);
+      privateKey = this.privateKey;
+    } else if (this.privateKeyPath) {
+      // Fall back to reading from file
+      console.log(`📖 Reading DNS private key from file: ${this.privateKeyPath}`);
+      try {
+        privateKey = fs.readFileSync(this.privateKeyPath, 'utf8');
+      } catch (error) {
+        throw new Error(`Cannot read SSH private key at ${this.privateKeyPath}: ${error.message}`);
+      }
+    } else {
+      throw new Error(`No DNS SSH private key available (not in database or file)`);
     }
 
     return new SSHClient({
@@ -165,38 +177,47 @@ class DNSClient {
    * Add an A record to the DNS zone
    */
   async addARecord(hostname, ipAddress) {
+    console.log(`\n📝 [DNS] Starting addARecord: hostname=${hostname}, ip=${ipAddress}`);
+    
     if (!this.isConfigured()) {
-      console.warn('⚠️  DNS not configured. Skipping DNS setup.');
+      console.warn('⚠️  [DNS] Not configured (missing host or zone). Skipping DNS setup.');
       return { success: false, message: 'DNS not configured' };
     }
 
-    try {
-      console.log(`📝 Adding DNS record: ${hostname}.${this.zone} -> ${ipAddress}`);
+    console.log(`✓ [DNS] DNS configured: host=${this.host}, zone=${this.zone}, zoneFile=${this.zoneFile}`);
 
+    try {
+      console.log(`🔗 [DNS] Creating SSH client to ${this.username}@${this.host}:${this.port}...`);
       const ssh = this._getSSHClient();
+      console.log(`✓ [DNS] SSH client created successfully`);
 
       // First, check if the record already exists
       const checkCmd = `grep -q "^${hostname}\\.${this.zone}\\." ${this.zoneFile} && echo "EXISTS" || echo "NOT_EXISTS"`;
+      console.log(`🔍 [DNS] Checking if record exists: ${checkCmd}`);
       const checkResult = await ssh.executeCommand(checkCmd);
       const exists = checkResult.stdout.trim() === 'EXISTS';
+      console.log(`[DNS] Record exists check result: ${exists ? 'YES' : 'NO'}`);
 
       if (exists) {
-        console.log(`✓ DNS record already exists for ${hostname}`);
+        console.log(`✓ [DNS] DNS record already exists for ${hostname}`);
         return { success: true, message: 'DNS record already exists' };
       }
 
       // Create backup
+      console.log(`💾 [DNS] Creating backup of zone file...`);
       await ssh.executeCommand(`sudo cp ${this.zoneFile} ${this.zoneFile}.backup`);
+      console.log(`✓ [DNS] Backup created`);
 
       // Add the new A record at the end of the file with proper BIND format
       // Format: hostname.zone.     IN      A       ipAddress
       const fqdn = `${hostname}.${this.zone}.`;
       const addCmd = `echo "${fqdn}\tIN\tA\t${ipAddress}" | sudo tee -a ${this.zoneFile} > /dev/null`;
+      console.log(`✍️  [DNS] Adding record with command: ${addCmd}`);
       await ssh.executeCommand(addCmd);
-
-      console.log(`✓ Added DNS record: ${hostname} -> ${ipAddress}`);
+      console.log(`✓ [DNS] Record added to zone file`);
 
       // Increment SOA serial number (format: YYYYMMDDNN)
+      console.log(`🔢 [DNS] Updating SOA serial number...`);
       const today = new Date();
       const datePrefix = today.getFullYear().toString() + 
                          (today.getMonth() + 1).toString().padStart(2, '0') + 
@@ -206,6 +227,7 @@ class DNSClient {
       const getSerialCmd = `grep -oP '(?<=SOA\\s+\\S+\\s+\\S+\\s+\\(\\s+)\\d+' ${this.zoneFile} | head -1`;
       const serialResult = await ssh.executeCommand(getSerialCmd);
       const currentSerial = serialResult.stdout.trim();
+      console.log(`[DNS] Current serial: ${currentSerial}`);
       
       let newSerial;
       if (currentSerial.startsWith(datePrefix)) {
@@ -218,18 +240,19 @@ class DNSClient {
       }
 
       const serialCmd = `sudo sed -i 's/${currentSerial}/${newSerial}/' ${this.zoneFile}`;
+      console.log(`🔄 [DNS] Updating serial: ${currentSerial} -> ${newSerial}`);
       await ssh.executeCommand(serialCmd);
-      console.log(`✓ Updated SOA serial: ${currentSerial} -> ${newSerial}`);
+      console.log(`✓ [DNS] Serial updated successfully`);
 
       // Reload the zone
-      console.log('🔄 Reloading DNS zone...');
+      console.log(`🔄 [DNS] Reloading DNS zone...`);
       const reloadCmd = 'sudo rndc reload zanarkand.site 2>/dev/null || sudo systemctl reload bind9 2>/dev/null || sudo systemctl reload named 2>/dev/null';
       await ssh.executeCommand(reloadCmd);
-
-      console.log('✓ DNS zone reloaded successfully');
+      console.log(`✓ [DNS] Zone reloaded successfully\n`);
+      
       return { success: true, message: 'DNS record added and zone reloaded' };
     } catch (error) {
-      console.error('⚠️  DNS configuration error:', error.message);
+      console.error(`\n❌ [DNS] Error adding DNS record: ${error.message}\n`);
       return {
         success: false,
         message: `Could not update DNS: ${error.message}`,
