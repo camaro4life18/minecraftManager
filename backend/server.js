@@ -906,20 +906,19 @@ async function startServer() {
     // Setup SSH key authentication for DNS
     app.post('/api/admin/config/setup-dns-ssh', verifyToken, requireAdmin, async (req, res) => {
       try {
-        const { host, sshPort, sshUser, password, sshKeyPath, zone, zoneFile } = req.body;
+        const { host, sshPort, sshUser, password, zone, zoneFile } = req.body;
         
         // Get configured values if not provided in request
         const configuredHost = host || await AppConfig.get('dns_host');
-        const configuredSshPort = sshPort || await AppConfig.get('dns_ssh_port');
+        const configuredSshPort = sshPort || await AppConfig.get('dns_ssh_port') || 22;
         const configuredSshUser = sshUser || await AppConfig.get('dns_ssh_user');
-        const configuredKeyPath = sshKeyPath || await AppConfig.get('dns_ssh_key') || '/root/.ssh/id_rsa_dns';
         const configuredZone = zone || await AppConfig.get('dns_zone');
         const configuredZoneFile = zoneFile || await AppConfig.get('dns_zone_file');
 
-        if (!configuredHost || !password) {
+        if (!configuredHost || !configuredSshUser || !password) {
           return res.status(400).json({ 
             success: false, 
-            error: 'DNS host and password are required' 
+            error: 'DNS host, SSH user, and password are required' 
           });
         }
 
@@ -928,20 +927,20 @@ async function startServer() {
           
           const dnsClient = new DNSClient({ 
             host: configuredHost, 
-            port: configuredSshPort || 22,
+            port: configuredSshPort,
             username: configuredSshUser,
             password,
-            privateKeyPath: configuredKeyPath,
             zone: configuredZone,
             zoneFile: configuredZoneFile
           });
 
-          // Setup SSH key authentication
-          await dnsClient.setupSSHKeyAuth();
+          // Setup SSH key authentication (generates temp key, adds to DNS server)
+          const setupResult = await dnsClient.setupSSHKeyAuth();
 
           res.json({ 
             success: true, 
-            message: 'SSH key authentication configured successfully'
+            message: setupResult.message,
+            nextStep: 'Call /api/admin/config/store-dns-ssh-key with password to retrieve and store the private key in the database'
           });
         } catch (error) {
           console.error('DNS SSH setup error:', error);
