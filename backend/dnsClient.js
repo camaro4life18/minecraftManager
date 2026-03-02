@@ -38,11 +38,12 @@ class DNSClient extends RemoteServiceClient {
 
   _buildSudoCommand(command) {
     if (this.sudoPassword) {
-      const escapedPassword = this.sudoPassword.replace(/'/g, `'"'"'`);
-      const escapedCommand = command.replace(/'/g, `'"'"'`);
-      return `echo '${escapedPassword}' | sudo -S -p '' sh -c '${escapedCommand}'`;
+      // Use printf to avoid issues with special characters in heredoc
+      // Pass password to sudo via stdin with -S flag
+      return `printf '%s\n' '${this.sudoPassword.replace(/'/g, "'\"'\"'")}' | sudo -S -p '' ${command}`;
     }
 
+    // Fallback to no-password sudo (requires NOPASSWD in sudoers)
     return `sudo -n ${command}`;
   }
 

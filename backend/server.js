@@ -189,7 +189,7 @@ async function startServer() {
       const zone = await AppConfig.get('dns_zone');
       const zoneFile = await AppConfig.get('dns_zone_file');
       
-      console.log(`🔐 Loading DNS client: host=${host}, user=${sshUser}, keyPath=${sshKeyPath}, hasPrivateKey=${!!sshPrivateKey}`);
+      console.log(`🔐 Loading DNS client: host=${host}, user=${sshUser}, keyPath=${sshKeyPath}, hasPrivateKey=${!!sshPrivateKey}, hasSudoPassword=${!!sudoPassword}`);
       
       return new DNSClient({
         host,
