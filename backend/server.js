@@ -940,7 +940,11 @@ async function startServer() {
             console.log('✓ DNS private key stored in database during setup');
           }
 
-          console.log('✓ DNS setup complete - using SSH key auth with no-password sudo (sudo -n)');
+          console.log('✓ DNS setup complete - SSH key authentication configured');
+          console.log('⚠️  NEXT STEP: Configure passwordless sudo on the DNS server');
+          console.log(`ℹ️  SSH into ${configuredHost} and run (with your password when prompted):`);
+          console.log(`   echo '${configuredSshUser} ALL=(ALL) NOPASSWD:/bin/cp,/bin/sed,/bin/tee,/usr/sbin/rndc,/bin/systemctl' | sudo tee /etc/sudoers.d/dns-ops`);
+          console.log(`   sudo chmod 440 /etc/sudoers.d/dns-ops`);
 
           res.json({ 
             success: true, 
