@@ -9,18 +9,18 @@ class DNSClient extends RemoteServiceClient {
   constructor(config = {}) {
     // Initialize base class with SSH config
     super({
-      host: config.host || process.env.DNS_HOST,
-      port: config.port || process.env.DNS_PORT || 22,
-      username: config.username || process.env.DNS_USER,
+      host: config.host,
+      port: config.port,
+      username: config.username,
       password: config.password,
-      privateKeyPath: config.privateKeyPath || process.env.DNS_SSH_KEY,
+      privateKeyPath: config.privateKeyPath,
       privateKey: config.privateKey,
       serviceId: 'dns'
     });
 
     // DNS-specific configuration
-    this.zone = config.zone || process.env.DNS_ZONE;
-    this.zoneFile = config.zoneFile || process.env.DNS_ZONE_FILE;
+    this.zone = config.zone;
+    this.zoneFile = config.zoneFile;
     this.sudoPassword = config.sudoPassword;
   }
 

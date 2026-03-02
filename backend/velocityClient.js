@@ -7,18 +7,18 @@ class VelocityClient extends RemoteServiceClient {
   constructor(config = {}) {
     // Initialize base class with SSH config
     super({
-      host: config.host || process.env.VELOCITY_HOST,
-      port: config.port || process.env.VELOCITY_SSH_PORT || 22,
-      username: config.username || process.env.VELOCITY_SSH_USER,
+      host: config.host,
+      port: config.port,
+      username: config.username,
       password: config.password,
-      privateKeyPath: config.privateKeyPath || process.env.VELOCITY_SSH_KEY || '~/.ssh/id_rsa',
+      privateKeyPath: config.privateKeyPath,
       privateKey: config.privateKey,
       serviceId: 'velocity'
     });
 
     // Velocity-specific configuration
-    this.velocityConfigPath = config.configPath || process.env.VELOCITY_CONFIG_PATH || '/opt/velocity-proxy/velocity.toml';
-    this.velocityServiceName = config.serviceName || process.env.VELOCITY_SERVICE_NAME || 'velocity';
+    this.velocityConfigPath = config.configPath;
+    this.velocityServiceName = config.serviceName;
   }
 
   isConfigured() {
