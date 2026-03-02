@@ -948,7 +948,7 @@ async function startServer() {
 
           res.json({ 
             success: true, 
-            message: 'SSH key authentication configured successfully and key saved to database.'
+            message: 'SSH key authentication configured. Please manually configure passwordless sudo on the DNS server (see above for instructions).'
           });
         } catch (error) {
           console.error('DNS SSH setup error:', error);
@@ -2343,17 +2343,19 @@ async function startServer() {
         try {
           const dns = await getDNSClient();
           if (dns.isConfigured() && assignedVmId) {
-            const sshConfig = await ManagedServer.getSSHConfig(assignedVmId);
-            if (sshConfig && sshConfig.ssh_host) {
-              const serverIp = sshConfig.ssh_host;
-              console.log(`📝 Adding DNS record: ${domainName} -> ${serverIp}`);
+            // DNS should point to the Velocity proxy, not the individual VM
+            const velocityHost = await AppConfig.get('velocity_host');
+            if (velocityHost) {
+              console.log(`📝 Adding DNS record: ${domainName} -> ${velocityHost}`);
               
-              const dnsResult = await dns.addARecord(domainName, serverIp);
+              const dnsResult = await dns.addARecord(domainName, velocityHost);
               if (dnsResult.success) {
                 console.log(`✅ Added DNS record successfully`);
               } else {
                 console.warn(`⚠️  Could not add DNS record, but VM clone succeeded: ${dnsResult.message}`);
               }
+            } else {
+              console.warn('⚠️  Velocity host not configured, skipping DNS record');
             }
           }
         } catch (dnsError) {
