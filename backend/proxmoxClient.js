@@ -577,10 +577,14 @@ class ProxmoxClient {
       const node = details.node;
       const type = details.type;
 
+      console.log(`🗑️  Sending DELETE request to /nodes/${node}/${type}/${vmid}...`);
       const response = await this.api.delete(`/nodes/${node}/${type}/${vmid}`);
+      console.log(`✓ Delete response:`, JSON.stringify(response.data, null, 2));
       return response.data.data;
     } catch (error) {
-      throw new Error(`Failed to delete server: ${error.message}`);
+      console.error(`❌ Delete failed:`, error.response?.data || error.message);
+      const errorMsg = error.response?.data?.errors || error.message;
+      throw new Error(`Failed to delete server: ${errorMsg}`);
     }
   }
 
