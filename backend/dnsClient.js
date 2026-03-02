@@ -27,6 +27,14 @@ class DNSClient extends RemoteServiceClient {
     return !!(this.host && this.zone);
   }
 
+  async _execOrThrow(ssh, command, step) {
+    const result = await ssh.executeCommand(command);
+    if (result.code !== 0) {
+      throw new Error(`${step} failed (exit ${result.code}): ${result.stderr || result.stdout || 'Unknown error'}`);
+    }
+    return result;
+  }
+
   /**
    * Add an A record to the DNS zone
    */
@@ -59,7 +67,7 @@ class DNSClient extends RemoteServiceClient {
 
       // Create backup
       console.log(`💾 [DNS] Creating backup of zone file...`);
-      await ssh.executeCommand(`sudo cp ${this.zoneFile} ${this.zoneFile}.backup`);
+      await this._execOrThrow(ssh, `sudo cp ${this.zoneFile} ${this.zoneFile}.backup`, 'Zone backup');
       console.log(`✓ [DNS] Backup created`);
 
       // Add the new A record at the end of the file with proper BIND format
@@ -67,7 +75,7 @@ class DNSClient extends RemoteServiceClient {
       const fqdn = `${hostname}.${this.zone}.`;
       const addCmd = `echo "${fqdn}\tIN\tA\t${ipAddress}" | sudo tee -a ${this.zoneFile} > /dev/null`;
       console.log(`✍️  [DNS] Adding record with command: ${addCmd}`);
-      await ssh.executeCommand(addCmd);
+      await this._execOrThrow(ssh, addCmd, 'Add DNS record');
       console.log(`✓ [DNS] Record added to zone file`);
 
       // Increment SOA serial number (format: YYYYMMDDNN)
@@ -78,10 +86,14 @@ class DNSClient extends RemoteServiceClient {
                          today.getDate().toString().padStart(2, '0');
       
       // Get current serial and increment the revision number
-      const getSerialCmd = `grep -oP '(?<=SOA\\s+\\S+\\s+\\S+\\s+\\(\\s+)\\d+' ${this.zoneFile} | head -1`;
-      const serialResult = await ssh.executeCommand(getSerialCmd);
+      const getSerialCmd = `grep -Eo '^[[:space:]]*[0-9]{10}[[:space:]]*$' ${this.zoneFile} | head -1 | tr -d '[:space:]'`;
+      const serialResult = await this._execOrThrow(ssh, getSerialCmd, 'Read SOA serial');
       const currentSerial = serialResult.stdout.trim();
       console.log(`[DNS] Current serial: ${currentSerial}`);
+
+      if (!currentSerial) {
+        throw new Error('Could not find current SOA serial in zone file');
+      }
       
       let newSerial;
       if (currentSerial.startsWith(datePrefix)) {
@@ -93,15 +105,15 @@ class DNSClient extends RemoteServiceClient {
         newSerial = datePrefix + '00';
       }
 
-      const serialCmd = `sudo sed -i 's/${currentSerial}/${newSerial}/' ${this.zoneFile}`;
+      const serialCmd = `sudo sed -i '0,/${currentSerial}/s//${newSerial}/' ${this.zoneFile}`;
       console.log(`🔄 [DNS] Updating serial: ${currentSerial} -> ${newSerial}`);
-      await ssh.executeCommand(serialCmd);
+      await this._execOrThrow(ssh, serialCmd, 'Update SOA serial');
       console.log(`✓ [DNS] Serial updated successfully`);
 
       // Reload the zone
       console.log(`🔄 [DNS] Reloading DNS zone...`);
       const reloadCmd = 'sudo rndc reload zanarkand.site 2>/dev/null || sudo systemctl reload bind9 2>/dev/null || sudo systemctl reload named 2>/dev/null';
-      await ssh.executeCommand(reloadCmd);
+      await this._execOrThrow(ssh, reloadCmd, 'Reload DNS zone');
       console.log(`✓ [DNS] Zone reloaded successfully\n`);
       
       return { success: true, message: 'DNS record added and zone reloaded' };
@@ -129,12 +141,12 @@ class DNSClient extends RemoteServiceClient {
       const ssh = this._getSSHClient();
 
       // Create backup
-      await ssh.executeCommand(`sudo cp ${this.zoneFile} ${this.zoneFile}.backup`);
+      await this._execOrThrow(ssh, `sudo cp ${this.zoneFile} ${this.zoneFile}.backup`, 'Zone backup');
 
       // Remove the record - match full FQDN
       const fqdn = `${hostname}.${this.zone}.`;
       const removeCmd = `sudo sed -i '/^${fqdn.replace(/\./g, '\\.')}/d' ${this.zoneFile}`;
-      await ssh.executeCommand(removeCmd);
+      await this._execOrThrow(ssh, removeCmd, 'Remove DNS record');
 
       // Increment SOA serial number (same logic as addARecord)
       const today = new Date();
@@ -142,9 +154,13 @@ class DNSClient extends RemoteServiceClient {
                          (today.getMonth() + 1).toString().padStart(2, '0') + 
                          today.getDate().toString().padStart(2, '0');
       
-      const getSerialCmd = `grep -oP '(?<=SOA\\s+\\S+\\s+\\S+\\s+\\(\\s+)\\d+' ${this.zoneFile} | head -1`;
-      const serialResult = await ssh.executeCommand(getSerialCmd);
+      const getSerialCmd = `grep -Eo '^[[:space:]]*[0-9]{10}[[:space:]]*$' ${this.zoneFile} | head -1 | tr -d '[:space:]'`;
+      const serialResult = await this._execOrThrow(ssh, getSerialCmd, 'Read SOA serial');
       const currentSerial = serialResult.stdout.trim();
+
+      if (!currentSerial) {
+        throw new Error('Could not find current SOA serial in zone file');
+      }
       
       let newSerial;
       if (currentSerial.startsWith(datePrefix)) {
@@ -154,12 +170,12 @@ class DNSClient extends RemoteServiceClient {
         newSerial = datePrefix + '00';
       }
 
-      const serialCmd = `sudo sed -i 's/${currentSerial}/${newSerial}/' ${this.zoneFile}`;
-      await ssh.executeCommand(serialCmd);
+      const serialCmd = `sudo sed -i '0,/${currentSerial}/s//${newSerial}/' ${this.zoneFile}`;
+      await this._execOrThrow(ssh, serialCmd, 'Update SOA serial');
 
       // Reload the zone
       const reloadCmd = 'sudo rndc reload zanarkand.site 2>/dev/null || sudo systemctl reload bind9 2>/dev/null || sudo systemctl reload named 2>/dev/null';
-      await ssh.executeCommand(reloadCmd);
+      await this._execOrThrow(ssh, reloadCmd, 'Reload DNS zone');
 
       console.log(`✓ DNS record removed for ${hostname}`);
       return { success: true };
