@@ -978,6 +978,52 @@ async function startServer() {
       }
     });
 
+    // Retrieve and store DNS SSH private key from remote server
+    app.post('/api/admin/config/store-dns-ssh-key', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { host, sshPort, sshUser, password, remoteKeyPath } = req.body;
+
+        if (!host || !sshUser || !password) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'DNS host, SSH user, and password are required' 
+          });
+        }
+
+        try {
+          console.log(`🔐 Retrieving DNS private key from ${sshUser}@${host}...`);
+          
+          // Use sshpass to read the private key from remote server
+          const keyPath = remoteKeyPath || '/root/.ssh/id_rsa_dns';
+          const cmd = `sshpass -p "${password}" ssh -o StrictHostKeyChecking=no -p ${sshPort || 22} ${sshUser}@${host} "cat ${keyPath}"`;
+          
+          const { stdout } = await execAsync(cmd);
+          
+          if (!stdout || !stdout.includes('BEGIN RSA PRIVATE KEY')) {
+            throw new Error('Invalid private key format or key not found');
+          }
+
+          // Store the private key in database
+          await AppConfig.set('dns_ssh_private_key', stdout);
+          
+          console.log('✓ DNS private key stored in database');
+          
+          res.json({ 
+            success: true, 
+            message: 'DNS private key retrieved and stored successfully'
+          });
+        } catch (error) {
+          console.error('Error retrieving DNS key:', error);
+          res.json({ 
+            success: false, 
+            error: `Failed to retrieve key: ${error.message}`
+          });
+        }
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     // Test DNS connection
     app.post('/api/admin/config/test-dns', verifyToken, requireAdmin, async (req, res) => {
       try {
