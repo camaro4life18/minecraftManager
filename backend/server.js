@@ -724,11 +724,11 @@ async function startServer() {
           // Create a temporary Velocity client to test connection
           const testVelocity = new VelocityClient({ 
             host, 
-            port: sshPort || 22,
-            username: sshUser || 'joseph',
-            privateKeyPath: sshKeyPath || '~/.ssh/id_rsa',
-            configPath: configPath || '/opt/velocity-proxy/velocity.toml',
-            serviceName: serviceName || 'velocity'
+            port: sshPort ? parseInt(sshPort) : undefined,
+            username: sshUser,
+            privateKeyPath: sshKeyPath,
+            configPath,
+            serviceName
           });
           const result = await testVelocity.listServers();
           
@@ -763,8 +763,8 @@ async function startServer() {
         try {
           const testVelocity = new VelocityClient({ 
             host, 
-            port: sshPort || 22,
-            username: sshUser || 'joseph',
+            port: sshPort ? parseInt(sshPort) : undefined,
+            username: sshUser,
             password
           });
           await testVelocity.testPasswordConnection();
@@ -801,12 +801,12 @@ async function startServer() {
           
           const velocityClient = new VelocityClient({ 
             host, 
-            port: sshPort || 22,
-            username: sshUser || 'joseph',
+            port: sshPort ? parseInt(sshPort) : undefined,
+            username: sshUser,
             password,
-            privateKeyPath: sshKeyPath || '~/.ssh/id_rsa',
-            configPath: configPath || '/opt/velocity-proxy/velocity.toml',
-            serviceName: serviceName || 'velocity'
+            privateKeyPath: sshKeyPath,
+            configPath,
+            serviceName
           });
 
           // Setup SSH key authentication and capture generated private key
