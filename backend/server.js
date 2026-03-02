@@ -1157,15 +1157,24 @@ async function startServer() {
       try {
         const cloneProxmox = await getProxmoxClient();
         const allStorages = await cloneProxmox.getStorage();
+        const allNodes = await cloneProxmox.getNodes();
         
         // Get configured storages
         let configuredStorages = await AppConfig.get('available_storages');
         let enableFiltering = await AppConfig.get('enable_storage_filtering');
+        let configuredNodes = await AppConfig.get('available_nodes');
+        let enableNodeFiltering = await AppConfig.get('enable_node_filtering');
         
         let parsedConfigured = [];
         if (configuredStorages) {
           parsedConfigured = typeof configuredStorages === 'string' ? 
             JSON.parse(configuredStorages) : configuredStorages;
+        }
+
+        let parsedConfiguredNodes = [];
+        if (configuredNodes) {
+          parsedConfiguredNodes = typeof configuredNodes === 'string' ? 
+            JSON.parse(configuredNodes) : configuredNodes;
         }
         
         const storageList = allStorages.map(s => ({
@@ -1176,11 +1185,21 @@ async function startServer() {
           availableGB: Math.round(Math.max(0, parseInt(s.avail || 0)) / (1024 * 1024 * 1024) * 100) / 100,
           sizeGB: Math.round(Math.max(0, parseInt(s.size || s.total || 0)) / (1024 * 1024 * 1024) * 100) / 100
         }));
+
+        const nodeList = allNodes
+          .map(n => ({
+            name: n.node,
+            configured: parsedConfiguredNodes.includes(n.node)
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name));
         
         res.json({
           allStorages: storageList,
           configured: parsedConfigured,
-          filteringEnabled: enableFiltering === 'true'
+          filteringEnabled: enableFiltering === 'true',
+          allNodes: nodeList,
+          configuredNodes: parsedConfiguredNodes,
+          nodeFilteringEnabled: enableNodeFiltering === 'true'
         });
       } catch (error) {
         console.error('Error fetching storages:', error);
@@ -1191,21 +1210,34 @@ async function startServer() {
     // Configure available storages
     app.post('/api/admin/config/storages', verifyToken, requireAdmin, async (req, res) => {
       try {
-        const { storages, enableFiltering } = req.body;
+        const { storages, enableFiltering, nodes, enableNodeFiltering } = req.body;
         
         if (!Array.isArray(storages)) {
           return res.status(400).json({ error: 'storages must be an array' });
+        }
+
+        if (nodes !== undefined && !Array.isArray(nodes)) {
+          return res.status(400).json({ error: 'nodes must be an array when provided' });
         }
         
         // Store configured storages
         await AppConfig.set('available_storages', storages, req.user.userId, 'List of available storage names for cloning', 'json');
         await AppConfig.set('enable_storage_filtering', (enableFiltering === true).toString(), req.user.userId, 'Enable storage filtering for users');
+
+        if (Array.isArray(nodes)) {
+          await AppConfig.set('available_nodes', nodes, req.user.userId, 'List of available Proxmox nodes for cloning', 'json');
+        }
+        if (enableNodeFiltering !== undefined) {
+          await AppConfig.set('enable_node_filtering', (enableNodeFiltering === true).toString(), req.user.userId, 'Enable Proxmox node filtering for users');
+        }
         
         res.json({ 
           success: true, 
           message: 'Storage configuration updated',
           configured: storages,
-          filteringEnabled: enableFiltering === true
+          filteringEnabled: enableFiltering === true,
+          configuredNodes: Array.isArray(nodes) ? nodes : null,
+          nodeFilteringEnabled: enableNodeFiltering === true
         });
       } catch (error) {
         console.error('Error updating storage config:', error);
@@ -1585,7 +1617,19 @@ async function startServer() {
         const cloneProxmox = await getProxmoxClient();
 
         // Get nodes
-        const nodes = await cloneProxmox.getNodes();
+        const allNodes = await cloneProxmox.getNodes();
+
+        // Get configured available nodes from app config
+        let availableNodeNames = await AppConfig.get('available_nodes');
+        const enableNodeFiltering = await AppConfig.get('enable_node_filtering');
+
+        let nodes = allNodes;
+        if (enableNodeFiltering === 'true' && availableNodeNames) {
+          const nodeList = typeof availableNodeNames === 'string'
+            ? JSON.parse(availableNodeNames)
+            : availableNodeNames;
+          nodes = allNodes.filter(n => nodeList.includes(n.node));
+        }
         
         // Get storage
         const allStorage = await cloneProxmox.getStorage();
@@ -1627,6 +1671,7 @@ async function startServer() {
         };
         
         console.log(`✅ Sending ${result.storage.length} storage options to client`);
+        console.log(`✅ Sending ${result.nodes.length} node options to client`);
         result.storage.forEach(st => {
           console.log(`   ${st.name} (${st.type}): ${st.availableGB} GB available, ${st.sizeGB} GB total`);
         });

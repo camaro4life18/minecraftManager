@@ -53,6 +53,9 @@ function AdminSettings({ apiBase, token, isAdmin }) {
   const [storageOptions, setStorageOptions] = useState([]);
   const [selectedStorages, setSelectedStorages] = useState([]);
   const [storageFilteringEnabled, setStorageFilteringEnabled] = useState(false);
+  const [hostOptions, setHostOptions] = useState([]);
+  const [selectedHosts, setSelectedHosts] = useState([]);
+  const [hostFilteringEnabled, setHostFilteringEnabled] = useState(false);
   const [loadingStorages, setLoadingStorages] = useState(false);
   const [showPasswords, setShowPasswords] = useState({
     proxmoxPassword: false,
@@ -191,10 +194,15 @@ function AdminSettings({ apiBase, token, isAdmin }) {
       const data = await response.json();
       const storages = Array.isArray(data.allStorages) ? data.allStorages : [];
       const configured = Array.isArray(data.configured) ? data.configured : [];
+      const nodes = Array.isArray(data.allNodes) ? data.allNodes : [];
+      const configuredNodes = Array.isArray(data.configuredNodes) ? data.configuredNodes : [];
 
       setStorageOptions(storages);
       setSelectedStorages(configured);
       setStorageFilteringEnabled(Boolean(data.filteringEnabled));
+      setHostOptions(nodes);
+      setSelectedHosts(configuredNodes);
+      setHostFilteringEnabled(Boolean(data.nodeFilteringEnabled));
     } catch (err) {
       console.error('Error loading storage configuration:', err);
       setError(err.message || 'Failed to load storage configuration');
@@ -208,6 +216,14 @@ function AdminSettings({ apiBase, token, isAdmin }) {
       prev.includes(storageName)
         ? prev.filter(name => name !== storageName)
         : [...prev, storageName]
+    ));
+  };
+
+  const handleHostToggle = (hostName) => {
+    setSelectedHosts(prev => (
+      prev.includes(hostName)
+        ? prev.filter(name => name !== hostName)
+        : [...prev, hostName]
     ));
   };
 
@@ -225,7 +241,9 @@ function AdminSettings({ apiBase, token, isAdmin }) {
         },
         body: JSON.stringify({
           storages: selectedStorages,
-          enableFiltering: storageFilteringEnabled
+          enableFiltering: storageFilteringEnabled,
+          nodes: selectedHosts,
+          enableNodeFiltering: hostFilteringEnabled
         })
       });
 
@@ -234,7 +252,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
         throw new Error(data.error || 'Failed to save storage configuration');
       }
 
-      setSuccess('✓ Storage configuration saved successfully');
+      setSuccess('✓ Server configuration saved successfully');
       setTimeout(() => setSuccess(null), 5000);
       await loadStorageConfiguration();
     } catch (err) {
@@ -821,7 +839,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
           className={`tab-button ${activeTab === 'storage' ? 'active' : ''}`}
           onClick={() => setActiveTab('storage')}
         >
-          Storage Configuration
+          Server Configuration
         </button>
       </div>
 
@@ -1415,12 +1433,55 @@ function AdminSettings({ apiBase, token, isAdmin }) {
 
         {activeTab === 'storage' && (
           <div className="settings-section">
-            <h3>Storage Configuration</h3>
+            <h3>Server Configuration</h3>
             <p className="section-description">
-              Select which Proxmox storages users can choose from during cloning.
+              Select which Proxmox hosts and storages users can choose from during cloning.
             </p>
 
             <form className="settings-form">
+              <div className="form-group">
+                <label htmlFor="host-filtering-enabled">Enable Proxmox Host Filtering:</label>
+                <input
+                  type="checkbox"
+                  id="host-filtering-enabled"
+                  checked={hostFilteringEnabled}
+                  onChange={(e) => setHostFilteringEnabled(e.target.checked)}
+                  disabled={loading || loadingStorages}
+                />
+                <small>
+                  When enabled, clone form only shows checked Proxmox hosts below. When disabled, all hosts are shown.
+                </small>
+              </div>
+
+              <div className="form-group">
+                <label>Available Proxmox Hosts:</label>
+                {loadingStorages ? (
+                  <div>Loading host list...</div>
+                ) : hostOptions.length === 0 ? (
+                  <div>No hosts found. Check Proxmox configuration and connection.</div>
+                ) : (
+                  <div className="storage-options-list">
+                    {hostOptions.map((host) => {
+                      const checked = selectedHosts.includes(host.name);
+                      return (
+                        <div key={host.name} className="storage-option-row">
+                          <label className="storage-option-label">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => handleHostToggle(host.name)}
+                              disabled={loading || loadingStorages}
+                              className="storage-option-checkbox"
+                            />
+                            {host.name}
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               <div className="form-group">
                 <label htmlFor="storage-filtering-enabled">Enable Storage Filtering:</label>
                 <input
@@ -1471,7 +1532,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                   onClick={loadStorageConfiguration}
                   disabled={loading || loadingStorages}
                 >
-                  {loadingStorages ? 'Refreshing...' : '🔄 Refresh Storage List'}
+                  {loadingStorages ? 'Refreshing...' : '🔄 Refresh Server List'}
                 </button>
                 <button
                   type="button"
@@ -1479,7 +1540,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                   onClick={saveStorageConfig}
                   disabled={loading || loadingStorages}
                 >
-                  {loading ? 'Saving...' : '💾 Save Storage Config'}
+                  {loading ? 'Saving...' : '💾 Save Server Config'}
                 </button>
               </div>
             </form>
