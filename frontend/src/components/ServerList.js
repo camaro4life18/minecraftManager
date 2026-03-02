@@ -3,7 +3,7 @@ import '../styles/ServerList.css';
 
 function ServerList({ 
   servers, 
-  onClone, 
+  onCreateServer,
   onDelete, 
   onAddServer,
   onConfigureSSH,
@@ -39,6 +39,10 @@ function ServerList({
               <option value="vmid">Sort by VM ID</option>
             </select>
           </div>
+
+          <button className="btn btn-primary" onClick={onCreateServer}>
+            🚀 Create Server
+          </button>
 
           {isAdmin && (
             <button className="btn btn-success" onClick={onAddServer}>
@@ -85,13 +89,6 @@ function ServerList({
                     title="Manage Minecraft server"
                   >
                     ⚙️ Manage
-                  </button>
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => onClone(server)}
-                    title="Clone this server"
-                  >
-                    📋 Clone
                   </button>
                   {(isAdmin || server.is_owned_by_user) && (
                     <button

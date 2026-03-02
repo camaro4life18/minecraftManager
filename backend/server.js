@@ -1158,10 +1158,14 @@ async function startServer() {
         const cloneProxmox = await getProxmoxClient();
         const allStorages = await cloneProxmox.getStorage();
         const allNodes = await cloneProxmox.getNodes();
+        const baseServerResult = await pool.query(
+          'SELECT vmid, server_name FROM managed_servers ORDER BY server_name ASC'
+        );
         
         // Get configured storages
         let configuredStorages = await AppConfig.get('available_storages');
         let configuredNodes = await AppConfig.get('available_nodes');
+        const configuredBaseServerVmid = await AppConfig.get('clone_base_server_vmid');
         
         const allStorageNames = allStorages.map(s => s.storage);
         let parsedConfigured = allStorageNames;
@@ -1196,6 +1200,11 @@ async function startServer() {
             configured: parsedConfiguredNodes.includes(n.node)
           }))
           .sort((a, b) => a.name.localeCompare(b.name));
+
+        const baseServerOptions = baseServerResult.rows.map(row => ({
+          vmid: row.vmid,
+          name: row.server_name
+        }));
         
         res.json({
           allStorages: storageList,
@@ -1203,7 +1212,9 @@ async function startServer() {
           filteringEnabled: true,
           allNodes: nodeList,
           configuredNodes: parsedConfiguredNodes,
-          nodeFilteringEnabled: true
+          nodeFilteringEnabled: true,
+          baseServerOptions,
+          selectedBaseServerVmid: configuredBaseServerVmid ? parseInt(configuredBaseServerVmid) : null
         });
       } catch (error) {
         console.error('Error fetching storages:', error);
@@ -1214,7 +1225,7 @@ async function startServer() {
     // Configure available storages
     app.post('/api/admin/config/storages', verifyToken, requireAdmin, async (req, res) => {
       try {
-        const { storages, nodes } = req.body;
+        const { storages, nodes, baseServerVmid } = req.body;
         
         if (!Array.isArray(storages)) {
           return res.status(400).json({ error: 'storages must be an array' });
@@ -1232,6 +1243,24 @@ async function startServer() {
           await AppConfig.set('available_nodes', nodes, req.user.userId, 'List of available Proxmox nodes for cloning', 'json');
         }
         await AppConfig.set('enable_node_filtering', 'true', req.user.userId, 'Enable Proxmox node filtering for users');
+
+        if (baseServerVmid !== undefined && baseServerVmid !== null && baseServerVmid !== '') {
+          const parsedBaseVmId = parseInt(baseServerVmid);
+          if (Number.isNaN(parsedBaseVmId)) {
+            return res.status(400).json({ error: 'baseServerVmid must be a valid number' });
+          }
+
+          const baseServerExists = await pool.query(
+            'SELECT vmid FROM managed_servers WHERE vmid = $1',
+            [parsedBaseVmId]
+          );
+
+          if (baseServerExists.rows.length === 0) {
+            return res.status(400).json({ error: 'Selected base server does not exist in managed servers' });
+          }
+
+          await AppConfig.set('clone_base_server_vmid', parsedBaseVmId.toString(), req.user.userId, 'Base managed server VMID used for create-server cloning');
+        }
         
         res.json({ 
           success: true, 
@@ -1239,7 +1268,8 @@ async function startServer() {
           configured: storages,
           filteringEnabled: true,
           configuredNodes: Array.isArray(nodes) ? nodes : null,
-          nodeFilteringEnabled: true
+          nodeFilteringEnabled: true,
+          selectedBaseServerVmid: (baseServerVmid !== undefined && baseServerVmid !== null && baseServerVmid !== '') ? parseInt(baseServerVmid) : null
         });
       } catch (error) {
         console.error('Error updating storage config:', error);
@@ -1640,6 +1670,21 @@ async function startServer() {
           : allStorage.map(s => s.storage);
         const storage = allStorage.filter(s => storageList.includes(s.storage));
 
+        const configuredBaseServerVmid = await AppConfig.get('clone_base_server_vmid');
+        let baseServer = null;
+        if (configuredBaseServerVmid) {
+          const baseServerResult = await pool.query(
+            'SELECT vmid, server_name FROM managed_servers WHERE vmid = $1',
+            [parseInt(configuredBaseServerVmid)]
+          );
+          if (baseServerResult.rows.length > 0) {
+            baseServer = {
+              vmid: baseServerResult.rows[0].vmid,
+              name: baseServerResult.rows[0].server_name
+            };
+          }
+        }
+
         const result = { 
           nodes: nodes
             .map(n => ({ id: n.node, name: n.node }))
@@ -1661,7 +1706,8 @@ async function startServer() {
                 sizeGB: Math.round(Math.max(0, total) / (1024 * 1024 * 1024) * 100) / 100
               };
             })
-            .sort((a, b) => a.name.localeCompare(b.name))
+            .sort((a, b) => a.name.localeCompare(b.name)),
+          baseServer
         };
         
         console.log(`✅ Sending ${result.storage.length} storage options to client`);
@@ -1763,12 +1809,19 @@ async function startServer() {
         }
 
         const { sourceVmId, newVmId, domainName, seed, targetNode, targetStorage, clientRequestId } = req.body;
+        const configuredBaseVmId = await AppConfig.get('clone_base_server_vmid');
+        const effectiveSourceVmId = sourceVmId || configuredBaseVmId;
         
         // newVmId is now optional - Proxmox will auto-assign if not provided
-        if (!sourceVmId || !domainName) {
+        if (!effectiveSourceVmId || !domainName) {
           return res.status(400).json({ 
-            error: 'Missing required fields: sourceVmId, domainName' 
+            error: 'Missing required fields: domainName and configured base clone server' 
           });
+        }
+
+        const parsedSourceVmId = parseInt(effectiveSourceVmId);
+        if (Number.isNaN(parsedSourceVmId)) {
+          return res.status(400).json({ error: 'Configured source VM is invalid' });
         }
 
         // Enforce clone limit per user
@@ -1803,7 +1856,7 @@ async function startServer() {
           });
         }
 
-        console.log(`🔄 Attempting to clone VM ${sourceVmId} to ${domainName}...`);
+        console.log(`🔄 Attempting to clone VM ${parsedSourceVmId} to ${domainName}...`);
 
         let targetIp = null;
         let routerHost = null;
@@ -1880,7 +1933,7 @@ async function startServer() {
         // Use domain name as the VM name
         const newVmName = domainName;
         console.log(`📍 Clone parameters - targetNode: ${targetNode}, targetStorage: ${targetStorage}`);
-        const result = await cloneProxmox.cloneServer(sourceVmId, newVmId, newVmName, targetNode, targetStorage);
+        const result = await cloneProxmox.cloneServer(parsedSourceVmId, newVmId, newVmName, targetNode, targetStorage);
         setLiveCloneProgress(clientRequestId, {
           userId: req.user.userId,
           status: 'in-progress',
@@ -2051,17 +2104,17 @@ async function startServer() {
         }
         
         // Log the action and track as managed server with seed
-        await ServerCloneLog.create(req.user.userId, sourceVmId, assignedVmId, newVmName, 'pending');
+        await ServerCloneLog.create(req.user.userId, parsedSourceVmId, assignedVmId, newVmName, 'pending');
         await ManagedServer.create(assignedVmId, req.user.userId, newVmName, serverSeed);
         
         // Create clone status tracker
-        const cloneStatus = await CloneStatus.create(assignedVmId, req.user.userId, domainName, sourceVmId);
+        const cloneStatus = await CloneStatus.create(assignedVmId, req.user.userId, domainName, parsedSourceVmId);
         await CloneStatus.updateStep(assignedVmId, 'vm_cloned');
 
         // Copy SSH configuration from source to destination
         // This allows us to immediately configure the world without manual SSH setup
         const sshConfigCopied = await ManagedServer.copySSHConfig(
-          sourceVmId,
+          sourceVmId: parsedSourceVmId,
           assignedVmId,
           null,
           targetIp

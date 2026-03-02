@@ -54,6 +54,8 @@ function AdminSettings({ apiBase, token, isAdmin }) {
   const [selectedStorages, setSelectedStorages] = useState([]);
   const [hostOptions, setHostOptions] = useState([]);
   const [selectedHosts, setSelectedHosts] = useState([]);
+  const [baseServerOptions, setBaseServerOptions] = useState([]);
+  const [selectedBaseServerVmid, setSelectedBaseServerVmid] = useState('');
   const [loadingStorages, setLoadingStorages] = useState(false);
   const [showPasswords, setShowPasswords] = useState({
     proxmoxPassword: false,
@@ -194,11 +196,14 @@ function AdminSettings({ apiBase, token, isAdmin }) {
       const configured = Array.isArray(data.configured) ? data.configured : [];
       const nodes = Array.isArray(data.allNodes) ? data.allNodes : [];
       const configuredNodes = Array.isArray(data.configuredNodes) ? data.configuredNodes : [];
+      const baseServers = Array.isArray(data.baseServerOptions) ? data.baseServerOptions : [];
 
       setStorageOptions(storages);
       setSelectedStorages(configured);
       setHostOptions(nodes);
       setSelectedHosts(configuredNodes);
+      setBaseServerOptions(baseServers);
+      setSelectedBaseServerVmid(data.selectedBaseServerVmid ? String(data.selectedBaseServerVmid) : '');
     } catch (err) {
       console.error('Error loading storage configuration:', err);
       setError(err.message || 'Failed to load storage configuration');
@@ -237,7 +242,8 @@ function AdminSettings({ apiBase, token, isAdmin }) {
         },
         body: JSON.stringify({
           storages: selectedStorages,
-          nodes: selectedHosts
+          nodes: selectedHosts,
+          baseServerVmid: selectedBaseServerVmid || null
         })
       });
 
@@ -1433,6 +1439,26 @@ function AdminSettings({ apiBase, token, isAdmin }) {
             </p>
 
             <form className="settings-form">
+              <div className="form-group">
+                <label htmlFor="base-server-select">Base Server Template:</label>
+                <select
+                  id="base-server-select"
+                  value={selectedBaseServerVmid}
+                  onChange={(e) => setSelectedBaseServerVmid(e.target.value)}
+                  disabled={loading || loadingStorages}
+                >
+                  <option value="">Select a base managed server...</option>
+                  {baseServerOptions.map((server) => (
+                    <option key={server.vmid} value={server.vmid}>
+                      {server.name} (VMID: {server.vmid})
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  New "Create Server" operations clone from this server template.
+                </small>
+              </div>
+
               <div className="form-group">
                 <label>Available Proxmox Hosts:</label>
                 {loadingStorages ? (

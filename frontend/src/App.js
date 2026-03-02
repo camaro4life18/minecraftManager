@@ -102,14 +102,12 @@ function AppContent() {
     return <LoginPage />;
   }
 
-  const handleCloneClick = (server) => {
-    setSelectedServer(server);
+  const handleCreateServerClick = () => {
     setShowCloneForm(true);
   };
 
   const handleCloneSuccess = () => {
     setShowCloneForm(false);
-    setSelectedServer(null);
     setTimeout(fetchServers, 2000);
   };
 
@@ -252,7 +250,7 @@ function AppContent() {
               <>
                 <ServerList
                   servers={servers}
-                  onClone={handleCloneClick}
+                  onCreateServer={handleCreateServerClick}
                   onDelete={handleDeleteServer}
                   onAddServer={() => setShowAddServerModal(true)}
                   onConfigureSSH={handleConfigureSSH}
@@ -274,9 +272,8 @@ function AppContent() {
                   apiBase={API_BASE}
                 />
 
-                {showCloneForm && selectedServer && (
+                {showCloneForm && (
                   <CloneForm
-                    sourceServer={selectedServer}
                     onClose={() => setShowCloneForm(false)}
                     onSuccess={handleCloneSuccess}
                     apiBase={API_BASE}

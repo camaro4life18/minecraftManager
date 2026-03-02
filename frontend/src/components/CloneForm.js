@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import '../styles/CloneForm.css';
 
-function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
+function CloneForm({ onClose, onSuccess, apiBase, token }) {
   const [formData, setFormData] = useState({
     newVmId: '',
     domainName: '',
@@ -20,6 +20,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
   const [clonedVmId, setClonedVmId] = useState(null);
   const [cloneProgress, setCloneProgress] = useState(0);
   const [cloneStep, setCloneStep] = useState('');
+  const [baseServer, setBaseServer] = useState(null);
 
   // Prevent closing modal by clicking overlay when loading
   const handleOverlayClick = (e) => {
@@ -48,6 +49,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
         console.log('📋 Clone options response:', data);
         const nodeOptions = data.nodes || [];
         const storageOptions = data.storage || [];
+        setBaseServer(data.baseServer || null);
 
         setNodes(nodeOptions);
         setStorage(storageOptions);
@@ -155,6 +157,11 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
       return;
     }
 
+    if (!baseServer?.vmid) {
+      setError('Base server template is not configured. Ask an admin to set it in Server Configuration.');
+      return;
+    }
+
     // Validate custom seed if selected
     if (formData.seedOption === 'custom' && !formData.customSeed.trim()) {
       setError('Custom seed value is required when using custom seed option');
@@ -174,7 +181,6 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
       const seed = formData.seedOption === 'random' ? 'random' : formData.customSeed.trim();
 
       const payload = {
-        sourceVmId: sourceServer.vmid,
         domainName: formData.domainName,
         seed: seed
       };
@@ -199,7 +205,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
         setConsoleLogs(prev => [...prev, msg]);
       };
 
-      addLog(`📋 Source VM: ${sourceServer.vmid}`);
+      addLog(`📋 Base Template VM: ${baseServer.vmid} (${baseServer.name})`);
       addLog(`📝 Domain: ${formData.domainName}`);
       if (formData.targetNode) addLog(`🖥️ Target Node: ${formData.targetNode}`);
       if (formData.targetStorage) addLog(`💾 Target Storage: ${formData.targetStorage}`);
@@ -257,8 +263,14 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
       onClick={loading ? undefined : handleOverlayClick}
     >
       <div className={`modal-content ${loading ? 'loading' : ''}`} onClick={e => e.stopPropagation()}>
-        <h2>Clone Server</h2>
-        <p>Source: <strong>{sourceServer.name}</strong> (ID: {sourceServer.vmid})</p>
+        <h2>Create Server</h2>
+        <p>
+          Base template: {baseServer ? (
+            <strong>{baseServer.name} (ID: {baseServer.vmid})</strong>
+          ) : (
+            <strong>Not configured</strong>
+          )}
+        </p>
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
@@ -391,7 +403,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
               className="btn-submit"
             >
               {loading && <span className="spinner"></span>}
-              {loading ? 'Cloning Server...' : 'Clone Server'}
+              {loading ? 'Creating Server...' : 'Create Server'}
             </button>
           </div>
 
