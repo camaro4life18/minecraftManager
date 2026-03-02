@@ -350,7 +350,9 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
             >
               <option value="">Auto-select (use source storage)</option>
               {storage.map(stor => {
-                const availableGB = stor.available ? Math.round(stor.available / (1024 * 1024 * 1024)) : 0;
+                const availableGB = Number.isFinite(stor.availableGB)
+                  ? stor.availableGB
+                  : (stor.available ? Math.round((stor.available / (1024 * 1024 * 1024)) * 100) / 100 : 0);
                 return (
                   <option key={stor.id} value={stor.id}>
                     {stor.name} ({stor.type}) - {availableGB} GB available
