@@ -810,15 +810,20 @@ async function startServer() {
             serviceName: serviceName || 'velocity'
           });
 
-          // Setup SSH key authentication
-          await velocityClient.setupSSHKeyAuth();
+          // Setup SSH key authentication and capture generated private key
+          const setupResult = await velocityClient.setupSSHKeyAuth();
+
+          if (setupResult?.privateKey) {
+            await AppConfig.set('velocity_ssh_private_key', setupResult.privateKey);
+            console.log('✓ Velocity private key stored in database during setup');
+          }
 
           // Test the key-based connection
           const testResult = await velocityClient.listServers();
           
           res.json({ 
             success: true, 
-            message: `SSH key authentication configured successfully. Found ${testResult.servers.length} server(s).`,
+            message: `SSH key authentication configured successfully and key saved to database. Found ${testResult.servers.length} server(s).`,
             servers: testResult.servers
           });
         } catch (error) {
@@ -845,26 +850,15 @@ async function startServer() {
           });
         }
 
-        const sshKeyPath = await AppConfig.get('velocity_ssh_key') || '~/.ssh/id_rsa';
-        const sshPort = await AppConfig.get('velocity_ssh_port');
         const sshUser = await AppConfig.get('velocity_ssh_user');
-
-        const velocityClient = new VelocityClient({
-          host,
-          port: sshPort ? parseInt(sshPort) : 22,
-          username: sshUser || 'joseph',
-          privateKeyPath: sshKeyPath
-        });
-
-        const hasKey = velocityClient.hasSSHKey();
+        const privateKey = await AppConfig.get('velocity_ssh_private_key');
 
         res.json({ 
           configured: true,
-          hasSSHKey: hasKey,
+          hasSSHKey: !!privateKey,
           host,
-          sshUser: sshUser || 'joseph',
-          sshKeyPath,
-          message: hasKey ? 'SSH key is configured' : 'SSH key not found - password required for setup'
+          sshUser: sshUser,
+          message: privateKey ? '✓ SSH key is stored in database' : '⚠️ SSH key not yet stored. Run setup-velocity-ssh to generate and store it.'
         });
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -941,10 +935,14 @@ async function startServer() {
           // Setup SSH key authentication (generates temp key, adds to DNS server)
           const setupResult = await dnsClient.setupSSHKeyAuth();
 
+          if (setupResult?.privateKey) {
+            await AppConfig.set('dns_ssh_private_key', setupResult.privateKey);
+            console.log('✓ DNS private key stored in database during setup');
+          }
+
           res.json({ 
             success: true, 
-            message: setupResult.message,
-            nextStep: 'Step 2: Call /api/admin/config/store-dns-ssh-key with same password to retrieve and store the private key in the database'
+            message: 'SSH key authentication configured successfully and key saved to database.'
           });
         } catch (error) {
           console.error('DNS SSH setup error:', error);

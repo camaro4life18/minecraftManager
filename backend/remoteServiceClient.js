@@ -54,10 +54,14 @@ class RemoteServiceClient {
     }
 
     let tempKeyPath = null;
+    let generatedPrivateKey = null;
 
     try {
       // Generate a temporary SSH key
       tempKeyPath = await this.generateSSHKey();
+
+      // Read generated private key so caller can persist it in DB
+      generatedPrivateKey = fs.readFileSync(tempKeyPath, 'utf8');
 
       // Read the public key
       const publicKey = fs.readFileSync(`${tempKeyPath}.pub`, 'utf8').trim();
@@ -85,7 +89,14 @@ class RemoteServiceClient {
 
       console.log(`✓ SSH key installed on ${this.serviceId} server`);
 
-      return { success: true, message: `SSH key authentication configured. Now retrieve and store the private key via the store endpoint.` };
+      // Keep key in-memory for immediate operations in this request lifecycle
+      this.privateKey = generatedPrivateKey;
+
+      return {
+        success: true,
+        privateKey: generatedPrivateKey,
+        message: 'SSH key authentication configured and private key generated.'
+      };
     } catch (error) {
       console.error('❌ SSH key setup failed:', error.message);
       throw error;
