@@ -185,6 +185,7 @@ async function startServer() {
       const sshUser = await AppConfig.get('dns_ssh_user');
       const sshKeyPath = await AppConfig.get('dns_ssh_key');
       const sshPrivateKey = await AppConfig.get('dns_ssh_private_key');
+      const sudoPassword = await AppConfig.get('dns_sudo_password');
       const zone = await AppConfig.get('dns_zone');
       const zoneFile = await AppConfig.get('dns_zone_file');
       
@@ -196,6 +197,7 @@ async function startServer() {
         username: sshUser,
         privateKeyPath: sshKeyPath,
         privateKey: sshPrivateKey,
+        sudoPassword,
         zone,
         zoneFile
       });
@@ -653,6 +655,7 @@ async function startServer() {
           if (dns.sshPort) await AppConfig.set('dns_ssh_port', dns.sshPort.toString(), req.user.userId, 'DNS SSH port');
           if (dns.sshUser) await AppConfig.set('dns_ssh_user', dns.sshUser, req.user.userId, 'DNS SSH username');
           if (dns.sshKeyPath) await AppConfig.set('dns_ssh_key', dns.sshKeyPath, req.user.userId, 'DNS SSH private key path');
+          if (dns.sudoPassword) await AppConfig.set('dns_sudo_password', dns.sudoPassword, req.user.userId, 'DNS sudo password', 'password');
           if (dns.zone) await AppConfig.set('dns_zone', dns.zone, req.user.userId, 'DNS zone name');
           if (dns.zoneFile) await AppConfig.set('dns_zone_file', dns.zoneFile, req.user.userId, 'DNS zone file path');
         }
@@ -904,7 +907,7 @@ async function startServer() {
     // Setup SSH key authentication for DNS
     app.post('/api/admin/config/setup-dns-ssh', verifyToken, requireAdmin, async (req, res) => {
       try {
-        const { host, sshPort, sshUser, password, zone, zoneFile } = req.body;
+        const { host, sshPort, sshUser, password, sudoPassword, zone, zoneFile } = req.body;
         
         // Get configured values if not provided in request
         const configuredHost = host || await AppConfig.get('dns_host');
@@ -928,6 +931,7 @@ async function startServer() {
             port: configuredSshPort,
             username: configuredSshUser,
             password,
+            sudoPassword: sudoPassword || password,
             zone: configuredZone,
             zoneFile: configuredZoneFile
           });
@@ -939,6 +943,9 @@ async function startServer() {
             await AppConfig.set('dns_ssh_private_key', setupResult.privateKey);
             console.log('✓ DNS private key stored in database during setup');
           }
+
+          await AppConfig.set('dns_sudo_password', sudoPassword || password, req.user.userId, 'DNS sudo password', 'password');
+          console.log('✓ DNS sudo password stored in database during setup');
 
           res.json({ 
             success: true, 
