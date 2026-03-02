@@ -981,15 +981,15 @@ async function startServer() {
     // Retrieve and store DNS SSH private key from remote server
     app.post('/api/admin/config/store-dns-ssh-key', verifyToken, requireAdmin, async (req, res) => {
       try {
-        const sshUser = await AppConfig.get('dns_ssh_user') || 'joseph';
-        const sshPort = await AppConfig.get('dns_ssh_port') || 22;
         const host = await AppConfig.get('dns_host');
+        const sshUser = await AppConfig.get('dns_ssh_user');
+        const sshPort = await AppConfig.get('dns_ssh_port') || 22;
         const { password, remoteKeyPath } = req.body;
 
-        if (!host || !password) {
+        if (!host || !sshUser || !password) {
           return res.status(400).json({ 
             success: false, 
-            error: 'DNS not configured or password is required' 
+            error: 'DNS host, SSH user, and password are all required. Configure DNS settings first.' 
           });
         }
 
