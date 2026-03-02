@@ -52,10 +52,8 @@ function AdminSettings({ apiBase, token, isAdmin }) {
   const [proxmoxNodes, setProxmoxNodes] = useState([]);
   const [storageOptions, setStorageOptions] = useState([]);
   const [selectedStorages, setSelectedStorages] = useState([]);
-  const [storageFilteringEnabled, setStorageFilteringEnabled] = useState(false);
   const [hostOptions, setHostOptions] = useState([]);
   const [selectedHosts, setSelectedHosts] = useState([]);
-  const [hostFilteringEnabled, setHostFilteringEnabled] = useState(false);
   const [loadingStorages, setLoadingStorages] = useState(false);
   const [showPasswords, setShowPasswords] = useState({
     proxmoxPassword: false,
@@ -199,10 +197,8 @@ function AdminSettings({ apiBase, token, isAdmin }) {
 
       setStorageOptions(storages);
       setSelectedStorages(configured);
-      setStorageFilteringEnabled(Boolean(data.filteringEnabled));
       setHostOptions(nodes);
       setSelectedHosts(configuredNodes);
-      setHostFilteringEnabled(Boolean(data.nodeFilteringEnabled));
     } catch (err) {
       console.error('Error loading storage configuration:', err);
       setError(err.message || 'Failed to load storage configuration');
@@ -241,9 +237,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
         },
         body: JSON.stringify({
           storages: selectedStorages,
-          enableFiltering: storageFilteringEnabled,
-          nodes: selectedHosts,
-          enableNodeFiltering: hostFilteringEnabled
+          nodes: selectedHosts
         })
       });
 
@@ -1440,20 +1434,6 @@ function AdminSettings({ apiBase, token, isAdmin }) {
 
             <form className="settings-form">
               <div className="form-group">
-                <label htmlFor="host-filtering-enabled">Enable Proxmox Host Filtering:</label>
-                <input
-                  type="checkbox"
-                  id="host-filtering-enabled"
-                  checked={hostFilteringEnabled}
-                  onChange={(e) => setHostFilteringEnabled(e.target.checked)}
-                  disabled={loading || loadingStorages}
-                />
-                <small>
-                  When enabled, clone form only shows checked Proxmox hosts below. When disabled, all hosts are shown.
-                </small>
-              </div>
-
-              <div className="form-group">
                 <label>Available Proxmox Hosts:</label>
                 {loadingStorages ? (
                   <div>Loading host list...</div>
@@ -1480,20 +1460,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                     })}
                   </div>
                 )}
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="storage-filtering-enabled">Enable Storage Filtering:</label>
-                <input
-                  type="checkbox"
-                  id="storage-filtering-enabled"
-                  checked={storageFilteringEnabled}
-                  onChange={(e) => setStorageFilteringEnabled(e.target.checked)}
-                  disabled={loading || loadingStorages}
-                />
-                <small>
-                  When enabled, clone form only shows checked storages below. When disabled, all storages are shown.
-                </small>
+                <small>Clone form will always show only checked hosts.</small>
               </div>
 
               <div className="form-group">
@@ -1523,6 +1490,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                     })}
                   </div>
                 )}
+                <small>Clone form will always show only checked storages.</small>
               </div>
 
               <div className="form-actions">
