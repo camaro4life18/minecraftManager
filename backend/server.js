@@ -2608,6 +2608,7 @@ async function startServer() {
         
         res.json({ success: true, taskId: result });
       } catch (error) {
+        console.error('❌ Error deleting server:', error);
         res.status(500).json({ error: error.message });
       }
     });

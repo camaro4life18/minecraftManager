@@ -155,7 +155,10 @@ function AppContent() {
           'Authorization': `Bearer ${token}`
         }
       });
-      if (!response.ok) throw new Error('Failed to delete server');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete server');
+      }
       fetchServers();
     } catch (err) {
       setError(err.message);
