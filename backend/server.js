@@ -2579,19 +2579,30 @@ async function startServer() {
 
         console.log(`🗑️  Deleting server ${vmid} (${serverName})...`);
         
-        // Delete from Proxmox
-        const proxmox = await getProxmoxClient();
-        const result = await proxmox.deleteServer(vmid);
+        // Try to delete from Proxmox (but don't fail if it doesn't exist)
+        let taskId = null;
+        try {
+          const proxmox = await getProxmoxClient();
+          taskId = await proxmox.deleteServer(vmid);
+          console.log(`✓ Proxmox deletion initiated for ${vmid}`);
+        } catch (proxmoxError) {
+          if (proxmoxError.message.includes('not found') || proxmoxError.message.includes('No such element')) {
+            console.warn(`⚠️  Server ${vmid} not found in Proxmox (may have been deleted externally) - continuing with cleanup`);
+          } else {
+            throw proxmoxError;
+          }
+        }
         
-        // Remove from managed servers tracking
+        // Remove from managed servers tracking (always do this)
         await ManagedServer.delete(vmid);
+        console.log(`✓ Removed from managed servers database`);
 
         // Remove from Velocity server list if configured
         const velocity = await getVelocityClient();
         if (velocity.isConfigured() && serverName) {
           const velocityResult = await velocity.removeServer(serverName);
           if (!velocityResult.success) {
-            console.warn(`⚠️  Could not remove from velocity, but VM deletion succeeded: ${velocityResult.message}`);
+            console.warn(`⚠️  Could not remove from velocity: ${velocityResult.message}`);
           } else {
             console.log(`✓ Removed ${serverName} from Velocity`);
           }
@@ -2603,7 +2614,7 @@ async function startServer() {
           if (dns.isConfigured() && serverName) {
             const dnsResult = await dns.removeARecord(serverName);
             if (!dnsResult.success) {
-              console.warn(`⚠️  Could not remove DNS record, but VM deletion succeeded: ${dnsResult.message}`);
+              console.warn(`⚠️  Could not remove DNS record: ${dnsResult.message}`);
             } else {
               console.log(`✓ Removed DNS record for ${serverName}`);
             }
@@ -2612,8 +2623,8 @@ async function startServer() {
           console.warn(`⚠️  Error removing DNS record: ${dnsError.message}`);
         }
         
-        console.log(`✅ Server ${vmid} deletion initiated`);
-        res.json({ success: true, taskId: result });
+        console.log(`✅ Server ${vmid} cleanup complete`);
+        res.json({ success: true, taskId: taskId, message: 'Server removed from management' });
       } catch (error) {
         console.error('❌ Error deleting server:', error);
         res.status(500).json({ error: error.message });
