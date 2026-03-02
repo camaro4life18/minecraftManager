@@ -944,7 +944,7 @@ async function startServer() {
           res.json({ 
             success: true, 
             message: setupResult.message,
-            nextStep: 'Call /api/admin/config/store-dns-ssh-key with password to retrieve and store the private key in the database'
+            nextStep: 'Step 2: Call /api/admin/config/store-dns-ssh-key with same password to retrieve and store the private key in the database'
           });
         } catch (error) {
           console.error('DNS SSH setup error:', error);
@@ -970,19 +970,15 @@ async function startServer() {
           });
         }
 
-        const sshKeyPath = await AppConfig.get('dns_ssh_key') || '/root/.ssh/id_rsa_dns';
-        const sshPort = await AppConfig.get('dns_ssh_port');
         const sshUser = await AppConfig.get('dns_ssh_user');
-
-        const hasKey = fs.existsSync(sshKeyPath);
+        const privateKey = await AppConfig.get('dns_ssh_private_key');
 
         res.json({ 
           configured: true,
-          hasSSHKey: hasKey,
+          hasSSHKey: !!privateKey,
           host,
           sshUser: sshUser,
-          sshKeyPath,
-          message: hasKey ? 'SSH key is configured' : 'SSH key not found - password required for setup'
+          message: privateKey ? '✓ SSH key is stored in database' : '⚠️ SSH key not yet stored. Follow setup steps: 1) setup-dns-ssh, then 2) store-dns-ssh-key'
         });
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -1014,7 +1010,7 @@ async function startServer() {
           const { stdout } = await execAsync(cmd);
           
           if (!stdout || !stdout.includes('BEGIN RSA PRIVATE KEY')) {
-            throw new Error('Invalid private key format or key not found');
+            throw new Error(`Key not found at ${keyPath}. Make sure you've called /api/admin/config/setup-dns-ssh first to generate the key.`);
           }
 
           // Store the private key in database
@@ -1024,7 +1020,8 @@ async function startServer() {
           
           res.json({ 
             success: true, 
-            message: 'DNS private key retrieved and stored successfully'
+            message: 'DNS private key retrieved and stored successfully',
+            status: '✓ DNS is now fully configured and ready to use'
           });
         } catch (error) {
           console.error('Error retrieving DNS key:', error);
