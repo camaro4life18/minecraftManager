@@ -1460,6 +1460,32 @@ async function startServer() {
           [serverId]
         );
 
+        // Remove from Velocity server list if configured
+        const velocity = await getVelocityClient();
+        if (velocity.isConfigured() && server_name) {
+          const velocityResult = await velocity.removeServer(server_name);
+          if (!velocityResult.success) {
+            console.warn(`⚠️  Could not remove ${server_name} from Velocity: ${velocityResult.message}`);
+          } else {
+            console.log(`✓ Removed ${server_name} from Velocity`);
+          }
+        }
+
+        // Remove DNS record if configured
+        try {
+          const dns = await getDNSClient();
+          if (dns.isConfigured() && server_name) {
+            const dnsResult = await dns.removeARecord(server_name);
+            if (!dnsResult.success) {
+              console.warn(`⚠️  Could not remove DNS record for ${server_name}: ${dnsResult.message}`);
+            } else {
+              console.log(`✓ Removed DNS record for ${server_name}`);
+            }
+          }
+        } catch (dnsError) {
+          console.warn(`⚠️  Error removing DNS record: ${dnsError.message}`);
+        }
+
         console.log(`✓ Removed server ${vmid} (${server_name}) from managed list`);
         res.json({ message: 'Server removed from managed list' });
       } catch (error) {
