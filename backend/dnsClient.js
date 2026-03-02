@@ -27,8 +27,8 @@ class DNSClient {
    */
   async generateSSHKey() {
     try {
-      // Use temp directory for key generation since /root/.ssh is not persistent in container
-      const tempKeyPath = `/tmp/dns_ssh_key_${Date.now()}`;
+      // Use temp file for key generation since /root/.ssh is not persistent in container
+      const tempKeyPath = `/tmp/dns_ssh_key_${Date.now()}.key`;
       
       console.log(`🔑 Generating SSH key pair at ${tempKeyPath}...`);
       
@@ -40,7 +40,7 @@ class DNSClient {
       console.log('✓ SSH key pair generated successfully');
       return tempKeyPath;
     } catch (error) {
-      throw new Error(`Failed to generate SSH key: ${error.message}`);
+      throw new Error(`SSH key generation failed: ${error.message}`);
     }
   }
 
