@@ -15,6 +15,7 @@ class VelocityClient {
     this.username = config.username || process.env.VELOCITY_SSH_USER || 'joseph';
     this.password = config.password; // For initial setup only
     this.privateKeyPath = config.privateKeyPath || process.env.VELOCITY_SSH_KEY || '/root/.ssh/id_rsa_velocity';
+    this.privateKey = config.privateKey;  // Allow private key to be passed directly from database
     this.velocityConfigPath = config.configPath || process.env.VELOCITY_CONFIG_PATH || '/opt/velocity-proxy/velocity.toml';
     this.velocityServiceName = config.serviceName || process.env.VELOCITY_SERVICE_NAME || 'velocity';
   }
@@ -167,10 +168,20 @@ class VelocityClient {
    */
   _getSSHClient() {
     let privateKey;
-    try {
-      privateKey = fs.readFileSync(this.privateKeyPath, 'utf8');
-    } catch (error) {
-      throw new Error(`Cannot read SSH private key at ${this.privateKeyPath}: ${error.message}`);
+    
+    // Try database-stored private key first
+    if (this.privateKey) {
+      console.log(`✓ Using Velocity private key from database`);
+      privateKey = this.privateKey;
+    } else if (this.privateKeyPath) {
+      console.log(`📖 Reading Velocity private key from file: ${this.privateKeyPath}`);
+      try {
+        privateKey = fs.readFileSync(this.privateKeyPath, 'utf8');
+      } catch (error) {
+        throw new Error(`Cannot read SSH private key at ${this.privateKeyPath}: ${error.message}`);
+      }
+    } else {
+      throw new Error(`No Velocity SSH private key available`);
     }
 
     return new SSHClient({

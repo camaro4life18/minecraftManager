@@ -156,14 +156,18 @@ async function startServer() {
       const sshPort = await AppConfig.get('velocity_ssh_port');
       const sshUser = await AppConfig.get('velocity_ssh_user');
       const sshKeyPath = await AppConfig.get('velocity_ssh_key');
+      const sshPrivateKey = await AppConfig.get('velocity_ssh_private_key');
       const configPath = await AppConfig.get('velocity_config_path');
       const serviceName = await AppConfig.get('velocity_service_name');
+      
+      console.log(`🔌 Loading Velocity config: host=${host}, user=${sshUser}, privateKey=${sshPrivateKey ? 'from_db' : 'from_file'}`);
       
       return new VelocityClient({
         host,
         port: sshPort ? parseInt(sshPort) : undefined,
         username: sshUser,
         privateKeyPath: sshKeyPath,
+        privateKey: sshPrivateKey,
         configPath,
         serviceName
       });
@@ -1024,6 +1028,55 @@ async function startServer() {
           });
         } catch (error) {
           console.error('Error retrieving DNS key:', error);
+          res.json({ 
+            success: false, 
+            error: `Failed to retrieve key: ${error.message}`
+          });
+        }
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Retrieve and store Velocity SSH private key from remote server
+    app.post('/api/admin/config/store-velocity-ssh-key', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const host = await AppConfig.get('velocity_host');
+        const sshUser = await AppConfig.get('velocity_ssh_user');
+        const sshPort = await AppConfig.get('velocity_ssh_port') || 22;
+        const { password, remoteKeyPath } = req.body;
+
+        if (!host || !sshUser || !password) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Velocity host, SSH user, and password are all required. Configure Velocity settings first.' 
+          });
+        }
+
+        try {
+          console.log(`🔐 Retrieving Velocity private key from ${sshUser}@${host}...`);
+          
+          // Use sshpass to read the private key from remote server's user home directory
+          const keyPath = remoteKeyPath || '~/.ssh/id_rsa_velocity';
+          const cmd = `sshpass -p "${password}" ssh -o StrictHostKeyChecking=no -p ${sshPort} ${sshUser}@${host} "cat ${keyPath}"`;
+          
+          const { stdout } = await execAsync(cmd);
+          
+          if (!stdout || !stdout.includes('BEGIN RSA PRIVATE KEY')) {
+            throw new Error('Invalid private key format or key not found');
+          }
+
+          // Store the private key in database
+          await AppConfig.set('velocity_ssh_private_key', stdout);
+          
+          console.log('✓ Velocity private key stored in database');
+          
+          res.json({ 
+            success: true, 
+            message: 'Velocity private key retrieved and stored successfully'
+          });
+        } catch (error) {
+          console.error('Error retrieving Velocity key:', error);
           res.json({ 
             success: false, 
             error: `Failed to retrieve key: ${error.message}`
