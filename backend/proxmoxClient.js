@@ -583,7 +583,37 @@ class ProxmoxClient {
         : { purge: 1, skiplock: 1 };
 
       console.log(`🗑️  Sending force DELETE request to ${deletePath} with params:`, deleteParams);
-      const response = await this.api.delete(deletePath, { params: deleteParams });
+      let response;
+      try {
+        response = await this.api.delete(deletePath, { params: deleteParams });
+      } catch (deleteError) {
+        const proxmoxMessage = deleteError.response?.data?.message || '';
+        const isRunningError = proxmoxMessage.includes('is running - destroy failed');
+
+        if (!isRunningError) {
+          throw deleteError;
+        }
+
+        console.log(`⚡ ${type.toUpperCase()} ${vmid} is running; issuing hard stop then retrying delete...`);
+        await this.api.post(`/nodes/${node}/${type}/${vmid}/status/stop`, null, {
+          params: { skiplock: 1 }
+        });
+
+        const maxRetries = 15;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          try {
+            response = await this.api.delete(deletePath, { params: deleteParams });
+            console.log(`✓ Delete succeeded after hard stop (attempt ${attempt})`);
+            break;
+          } catch (retryError) {
+            const retryMsg = retryError.response?.data?.message || '';
+            if (attempt === maxRetries || !retryMsg.includes('is running - destroy failed')) {
+              throw retryError;
+            }
+          }
+        }
+      }
       console.log(`✓ Delete response:`, JSON.stringify(response.data, null, 2));
       return response.data.data;
     } catch (error) {
