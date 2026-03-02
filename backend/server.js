@@ -185,19 +185,16 @@ async function startServer() {
       const sshUser = await AppConfig.get('dns_ssh_user');
       const sshKeyPath = await AppConfig.get('dns_ssh_key');
       const sshPrivateKey = await AppConfig.get('dns_ssh_private_key');
-      const sudoPassword = await AppConfig.get('dns_sudo_password');
       const zone = await AppConfig.get('dns_zone');
       const zoneFile = await AppConfig.get('dns_zone_file');
       
-      console.log(`🔐 Loading DNS client: host=${host}, user=${sshUser}, keyPath=${sshKeyPath}, hasPrivateKey=${!!sshPrivateKey}, hasSudoPassword=${!!sudoPassword}`);
-      
+      console.log(`🔐 Loading DNS client: host=${host}, user=${sshUser}, keyPath=${sshKeyPath}, hasPrivateKey=${!!sshPrivateKey}`);      
       return new DNSClient({
         host,
         port: sshPort ? parseInt(sshPort) : undefined,
         username: sshUser,
         privateKeyPath: sshKeyPath,
         privateKey: sshPrivateKey,
-        sudoPassword,
         zone,
         zoneFile
       });
@@ -655,7 +652,6 @@ async function startServer() {
           if (dns.sshPort) await AppConfig.set('dns_ssh_port', dns.sshPort.toString(), req.user.userId, 'DNS SSH port');
           if (dns.sshUser) await AppConfig.set('dns_ssh_user', dns.sshUser, req.user.userId, 'DNS SSH username');
           if (dns.sshKeyPath) await AppConfig.set('dns_ssh_key', dns.sshKeyPath, req.user.userId, 'DNS SSH private key path');
-          if (dns.sudoPassword) await AppConfig.set('dns_sudo_password', dns.sudoPassword, req.user.userId, 'DNS sudo password', 'password');
           if (dns.zone) await AppConfig.set('dns_zone', dns.zone, req.user.userId, 'DNS zone name');
           if (dns.zoneFile) await AppConfig.set('dns_zone_file', dns.zoneFile, req.user.userId, 'DNS zone file path');
         }
@@ -944,8 +940,7 @@ async function startServer() {
             console.log('✓ DNS private key stored in database during setup');
           }
 
-          await AppConfig.set('dns_sudo_password', sudoPassword || password, req.user.userId, 'DNS sudo password', 'password');
-          console.log('✓ DNS sudo password stored in database during setup');
+          console.log('✓ DNS setup complete - using SSH key auth with no-password sudo (sudo -n)');
 
           res.json({ 
             success: true, 
