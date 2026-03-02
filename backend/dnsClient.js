@@ -104,8 +104,6 @@ class DNSClient {
       }
     }
   }
-    }
-  }
 
   /**
    * Test connection with password (before key setup)
