@@ -577,36 +577,13 @@ class ProxmoxClient {
       const node = details.node;
       const type = details.type;
 
-      const getCurrentStatus = async () => {
-        const statusResponse = await this.api.get(`/nodes/${node}/${type}/${vmid}/status/current`);
-        return statusResponse.data?.data?.status;
-      };
+      const deletePath = `/nodes/${node}/${type}/${vmid}`;
+      const deleteParams = type === 'qemu'
+        ? { purge: 1, 'destroy-unreferenced-disks': 1, skiplock: 1 }
+        : { purge: 1, skiplock: 1 };
 
-      let currentStatus = await getCurrentStatus();
-      console.log(`ℹ️  Current ${type.toUpperCase()} ${vmid} status: ${currentStatus}`);
-
-      if (currentStatus === 'running') {
-        console.log(`⏹️  VM ${vmid} is running. Stopping before delete...`);
-        await this.api.post(`/nodes/${node}/${type}/${vmid}/status/stop`);
-
-        // Wait up to 60s for VM/container to stop
-        const maxChecks = 30;
-        for (let i = 0; i < maxChecks; i++) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          currentStatus = await getCurrentStatus();
-          if (currentStatus !== 'running') {
-            console.log(`✓ ${type.toUpperCase()} ${vmid} stopped (status: ${currentStatus})`);
-            break;
-          }
-        }
-
-        if (currentStatus === 'running') {
-          throw new Error(`Server ${vmid} is still running after stop request`);
-        }
-      }
-
-      console.log(`🗑️  Sending DELETE request to /nodes/${node}/${type}/${vmid}...`);
-      const response = await this.api.delete(`/nodes/${node}/${type}/${vmid}`);
+      console.log(`🗑️  Sending force DELETE request to ${deletePath} with params:`, deleteParams);
+      const response = await this.api.delete(deletePath, { params: deleteParams });
       console.log(`✓ Delete response:`, JSON.stringify(response.data, null, 2));
       return response.data.data;
     } catch (error) {
