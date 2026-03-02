@@ -176,7 +176,7 @@ class DNSClient {
       const ssh = this._getSSHClient();
 
       // First, check if the record already exists
-      const checkCmd = `grep -q "^${hostname}" ${this.zoneFile} && echo "EXISTS" || echo "NOT_EXISTS"`;
+      const checkCmd = `grep -q "^${hostname}\\.${this.zone}\\." ${this.zoneFile} && echo "EXISTS" || echo "NOT_EXISTS"`;
       const checkResult = await ssh.executeCommand(checkCmd);
       const exists = checkResult.stdout.trim() === 'EXISTS';
 
@@ -188,21 +188,38 @@ class DNSClient {
       // Create backup
       await ssh.executeCommand(`sudo cp ${this.zoneFile} ${this.zoneFile}.backup`);
 
-      // Add the new A record after the last minecraft entry or at the end of [servers] section
-      // Insert before the "try" section if it exists
-      const addCmd = `sudo sed -i '/^# In what order/i ${hostname} A ${ipAddress}' ${this.zoneFile}`;
+      // Add the new A record at the end of the file with proper BIND format
+      // Format: hostname.zone.     IN      A       ipAddress
+      const fqdn = `${hostname}.${this.zone}.`;
+      const addCmd = `echo "${fqdn}\tIN\tA\t${ipAddress}" | sudo tee -a ${this.zoneFile} > /dev/null`;
       await ssh.executeCommand(addCmd);
 
       console.log(`✓ Added DNS record: ${hostname} -> ${ipAddress}`);
 
-      // Increment SOL serial number for zone file
-      const now = Math.floor(Date.now() / 1000);
-      const serialCmd = `sudo sed -i 's/^; Serial: .*/; Serial: ${now}/' ${this.zoneFile}`;
-      try {
-        await ssh.executeCommand(serialCmd);
-      } catch {
-        // Serial update might fail if format is different, that's ok
+      // Increment SOA serial number (format: YYYYMMDDNN)
+      const today = new Date();
+      const datePrefix = today.getFullYear().toString() + 
+                         (today.getMonth() + 1).toString().padStart(2, '0') + 
+                         today.getDate().toString().padStart(2, '0');
+      
+      // Get current serial and increment the revision number
+      const getSerialCmd = `grep -oP '(?<=SOA\\s+\\S+\\s+\\S+\\s+\\(\\s+)\\d+' ${this.zoneFile} | head -1`;
+      const serialResult = await ssh.executeCommand(getSerialCmd);
+      const currentSerial = serialResult.stdout.trim();
+      
+      let newSerial;
+      if (currentSerial.startsWith(datePrefix)) {
+        // Same day, increment revision number
+        const revision = parseInt(currentSerial.slice(-2)) + 1;
+        newSerial = datePrefix + revision.toString().padStart(2, '0');
+      } else {
+        // New day, start at 00
+        newSerial = datePrefix + '00';
       }
+
+      const serialCmd = `sudo sed -i 's/${currentSerial}/${newSerial}/' ${this.zoneFile}`;
+      await ssh.executeCommand(serialCmd);
+      console.log(`✓ Updated SOA serial: ${currentSerial} -> ${newSerial}`);
 
       // Reload the zone
       console.log('🔄 Reloading DNS zone...');
@@ -237,9 +254,31 @@ class DNSClient {
       // Create backup
       await ssh.executeCommand(`sudo cp ${this.zoneFile} ${this.zoneFile}.backup`);
 
-      // Remove the record
-      const removeCmd = `sudo sed -i '/^${hostname}[ \\t]/d' ${this.zoneFile}`;
+      // Remove the record - match full FQDN
+      const fqdn = `${hostname}.${this.zone}.`;
+      const removeCmd = `sudo sed -i '/^${fqdn.replace(/\./g, '\\.')}/d' ${this.zoneFile}`;
       await ssh.executeCommand(removeCmd);
+
+      // Increment SOA serial number (same logic as addARecord)
+      const today = new Date();
+      const datePrefix = today.getFullYear().toString() + 
+                         (today.getMonth() + 1).toString().padStart(2, '0') + 
+                         today.getDate().toString().padStart(2, '0');
+      
+      const getSerialCmd = `grep -oP '(?<=SOA\\s+\\S+\\s+\\S+\\s+\\(\\s+)\\d+' ${this.zoneFile} | head -1`;
+      const serialResult = await ssh.executeCommand(getSerialCmd);
+      const currentSerial = serialResult.stdout.trim();
+      
+      let newSerial;
+      if (currentSerial.startsWith(datePrefix)) {
+        const revision = parseInt(currentSerial.slice(-2)) + 1;
+        newSerial = datePrefix + revision.toString().padStart(2, '0');
+      } else {
+        newSerial = datePrefix + '00';
+      }
+
+      const serialCmd = `sudo sed -i 's/${currentSerial}/${newSerial}/' ${this.zoneFile}`;
+      await ssh.executeCommand(serialCmd);
 
       // Reload the zone
       const reloadCmd = 'sudo rndc reload zanarkand.site 2>/dev/null || sudo systemctl reload bind9 2>/dev/null || sudo systemctl reload named 2>/dev/null';
