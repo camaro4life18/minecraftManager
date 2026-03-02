@@ -2573,12 +2573,14 @@ async function startServer() {
           return res.status(403).json({ error: 'You can only delete servers you created' });
         }
 
-        // Get server name before deletion (for velocity cleanup)
-        const proxmox = await getProxmoxClient();
-        const servers = await proxmox.getServers();
-        const server = servers.find(s => s.vmid === vmid);
-        const serverName = server?.name;
+        // Get server name from database before deletion (for velocity/dns cleanup)
+        const managedServer = await ManagedServer.getServer(vmid);
+        const serverName = managedServer?.server_name;
 
+        console.log(`🗑️  Deleting server ${vmid} (${serverName})...`);
+        
+        // Delete from Proxmox
+        const proxmox = await getProxmoxClient();
         const result = await proxmox.deleteServer(vmid);
         
         // Remove from managed servers tracking
@@ -2590,6 +2592,8 @@ async function startServer() {
           const velocityResult = await velocity.removeServer(serverName);
           if (!velocityResult.success) {
             console.warn(`⚠️  Could not remove from velocity, but VM deletion succeeded: ${velocityResult.message}`);
+          } else {
+            console.log(`✓ Removed ${serverName} from Velocity`);
           }
         }
 
@@ -2600,12 +2604,15 @@ async function startServer() {
             const dnsResult = await dns.removeARecord(serverName);
             if (!dnsResult.success) {
               console.warn(`⚠️  Could not remove DNS record, but VM deletion succeeded: ${dnsResult.message}`);
+            } else {
+              console.log(`✓ Removed DNS record for ${serverName}`);
             }
           }
         } catch (dnsError) {
           console.warn(`⚠️  Error removing DNS record: ${dnsError.message}`);
         }
         
+        console.log(`✅ Server ${vmid} deletion initiated`);
         res.json({ success: true, taskId: result });
       } catch (error) {
         console.error('❌ Error deleting server:', error);
