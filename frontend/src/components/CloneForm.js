@@ -46,10 +46,23 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
 
         const data = await response.json();
         console.log('📋 Clone options response:', data);
-        setNodes(data.nodes || []);
-        setStorage(data.storage || []);
+        const nodeOptions = data.nodes || [];
+        const storageOptions = data.storage || [];
+
+        setNodes(nodeOptions);
+        setStorage(storageOptions);
+
+        setFormData(prev => ({
+          ...prev,
+          targetNode: nodeOptions.length > 0
+            ? (nodeOptions.some(n => n.id === prev.targetNode) ? prev.targetNode : nodeOptions[0].id)
+            : '',
+          targetStorage: storageOptions.length > 0
+            ? (storageOptions.some(s => s.id === prev.targetStorage) ? prev.targetStorage : storageOptions[0].id)
+            : ''
+        }));
         
-        if (!data.storage || data.storage.length === 0) {
+        if (storageOptions.length === 0) {
           console.warn('⚠️ No storage options returned from API');
         }
       } catch (err) {
@@ -323,7 +336,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
 
           {/* Target Node and Storage Selection */}
           <div className="form-group">
-            <label htmlFor="targetNode">Target Node (optional):</label>
+            <label htmlFor="targetNode">Target Node:</label>
             <select
               id="targetNode"
               name="targetNode"
@@ -331,16 +344,15 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
               onChange={handleInputChange}
               disabled={loading || optionsLoading}
             >
-              <option value="">Auto-select (use source node)</option>
               {nodes.map(node => (
                 <option key={node.id} value={node.id}>{node.name}</option>
               ))}
             </select>
-            <small>After cloning, the new VM will be migrated to this node. Leave blank to keep on source node.</small>
+            <small>New clone will target this Proxmox host.</small>
           </div>
 
           <div className="form-group">
-            <label htmlFor="targetStorage">Target Storage (optional):</label>
+            <label htmlFor="targetStorage">Target Storage:</label>
             <select
               id="targetStorage"
               name="targetStorage"
@@ -348,7 +360,6 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
               onChange={handleInputChange}
               disabled={loading || optionsLoading}
             >
-              <option value="">Auto-select (use source storage)</option>
               {storage.map(stor => {
                 const availableGB = Number.isFinite(stor.availableGB)
                   ? stor.availableGB
@@ -360,7 +371,7 @@ function CloneForm({ sourceServer, onClose, onSuccess, apiBase, token }) {
                 );
               })}
             </select>
-            <small>Select which storage to clone to. Useful if source storage is full. Leave blank to use the same storage as source.</small>
+            <small>New clone will target this storage.</small>
           </div>
 
           {error && <div className="error-message">{error}</div>}
