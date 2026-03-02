@@ -27,6 +27,10 @@ class DNSClient {
    */
   async generateSSHKey() {
     try {
+      if (!this.privateKeyPath) {
+        throw new Error('SSH key path not configured');
+      }
+
       // Check if key already exists
       if (fs.existsSync(this.privateKeyPath)) {
         console.log(`✓ SSH key already exists at ${this.privateKeyPath}`);
@@ -37,11 +41,15 @@ class DNSClient {
       
       // Ensure .ssh directory exists
       const sshDir = this.privateKeyPath.substring(0, this.privateKeyPath.lastIndexOf('/'));
-      await execAsync(`mkdir -p ${sshDir} && chmod 700 ${sshDir}`);
+      if (!sshDir) {
+        throw new Error(`Invalid SSH key path: ${this.privateKeyPath}`);
+      }
+
+      await execAsync(`mkdir -p "${sshDir}" && chmod 700 "${sshDir}"`);
 
       // Generate RSA key pair without passphrase
       await execAsync(
-        `ssh-keygen -t rsa -b 4096 -f ${this.privateKeyPath} -N "" -C "minecraft-manager-dns"`
+        `ssh-keygen -t rsa -b 4096 -f "${this.privateKeyPath}" -N "" -C "minecraft-manager-dns"`
       );
 
       console.log('✓ SSH key pair generated successfully');

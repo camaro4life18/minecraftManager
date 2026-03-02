@@ -907,8 +907,16 @@ async function startServer() {
     app.post('/api/admin/config/setup-dns-ssh', verifyToken, requireAdmin, async (req, res) => {
       try {
         const { host, sshPort, sshUser, password, sshKeyPath, zone, zoneFile } = req.body;
+        
+        // Get configured values if not provided in request
+        const configuredHost = host || await AppConfig.get('dns_host');
+        const configuredSshPort = sshPort || await AppConfig.get('dns_ssh_port');
+        const configuredSshUser = sshUser || await AppConfig.get('dns_ssh_user');
+        const configuredKeyPath = sshKeyPath || await AppConfig.get('dns_ssh_key') || '/root/.ssh/id_rsa_dns';
+        const configuredZone = zone || await AppConfig.get('dns_zone');
+        const configuredZoneFile = zoneFile || await AppConfig.get('dns_zone_file');
 
-        if (!host || !password) {
+        if (!configuredHost || !password) {
           return res.status(400).json({ 
             success: false, 
             error: 'DNS host and password are required' 
@@ -916,16 +924,16 @@ async function startServer() {
         }
 
         try {
-          console.log(`🔐 Setting up SSH key authentication for DNS ${host}...`);
+          console.log(`🔐 Setting up SSH key authentication for DNS ${configuredHost}...`);
           
           const dnsClient = new DNSClient({ 
-            host, 
-            port: sshPort || 22,
-            username: sshUser,
+            host: configuredHost, 
+            port: configuredSshPort || 22,
+            username: configuredSshUser,
             password,
-            privateKeyPath: sshKeyPath,
-            zone: zone,
-            zoneFile: zoneFile
+            privateKeyPath: configuredKeyPath,
+            zone: configuredZone,
+            zoneFile: configuredZoneFile
           });
 
           // Setup SSH key authentication
