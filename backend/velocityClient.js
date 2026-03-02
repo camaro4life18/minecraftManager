@@ -64,7 +64,17 @@ class VelocityClient extends RemoteServiceClient {
       
       if (restartResult.code === 0) {
         console.log('✓ Velocity proxy reloaded successfully');
-        return { success: true, message: 'Server added and Velocity reloaded' };
+        
+        // Update default route to point to the new server
+        console.log(`🎯 Setting ${minecraftServerName} as default route...`);
+        const defaultRouteCmd = `sudo sed -i 's|"zanarkand.site" = ".*"|"zanarkand.site" = "${minecraftServerName}"|' ${this.velocityConfigPath}`;
+        await ssh.executeCommand(defaultRouteCmd);
+        console.log(`✓ Default route updated to ${minecraftServerName}`);
+        
+        // Reload again to apply default route change
+        await ssh.executeCommand(`sudo systemctl restart ${this.velocityServiceName}`);
+        
+        return { success: true, message: 'Server added and set as default' };
       } else {
         console.warn('⚠️  Velocity restart returned non-zero code, but server was added to config');
         return { success: true, message: 'Server added to config, restart may need verification' };
