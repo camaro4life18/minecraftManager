@@ -981,21 +981,24 @@ async function startServer() {
     // Retrieve and store DNS SSH private key from remote server
     app.post('/api/admin/config/store-dns-ssh-key', verifyToken, requireAdmin, async (req, res) => {
       try {
-        const { host, sshPort, sshUser, password, remoteKeyPath } = req.body;
+        const sshUser = await AppConfig.get('dns_ssh_user') || 'joseph';
+        const sshPort = await AppConfig.get('dns_ssh_port') || 22;
+        const host = await AppConfig.get('dns_host');
+        const { password, remoteKeyPath } = req.body;
 
-        if (!host || !sshUser || !password) {
+        if (!host || !password) {
           return res.status(400).json({ 
             success: false, 
-            error: 'DNS host, SSH user, and password are required' 
+            error: 'DNS not configured or password is required' 
           });
         }
 
         try {
           console.log(`🔐 Retrieving DNS private key from ${sshUser}@${host}...`);
           
-          // Use sshpass to read the private key from remote server
-          const keyPath = remoteKeyPath || '/root/.ssh/id_rsa_dns';
-          const cmd = `sshpass -p "${password}" ssh -o StrictHostKeyChecking=no -p ${sshPort || 22} ${sshUser}@${host} "cat ${keyPath}"`;
+          // Use sshpass to read the private key from remote server's user home directory
+          const keyPath = remoteKeyPath || '~/.ssh/id_rsa_dns';
+          const cmd = `sshpass -p "${password}" ssh -o StrictHostKeyChecking=no -p ${sshPort} ${sshUser}@${host} "cat ${keyPath}"`;
           
           const { stdout } = await execAsync(cmd);
           
