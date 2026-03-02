@@ -143,19 +143,19 @@ function AppContent() {
     }
   };
 
-  const handleDeleteServer = async (serverId) => {
-    if (!window.confirm('Are you sure you want to remove this server from the managed list?')) {
+  const handleDeleteServer = async (vmid) => {
+    if (!window.confirm('Are you sure you want to DELETE this server? This will destroy the VM, remove it from Velocity, and delete its DNS record. This action cannot be undone!')) {
       return;
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/servers/${serverId}`, {
+      const response = await fetch(`${API_BASE}/api/servers/${vmid}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
-      if (!response.ok) throw new Error('Failed to remove server');
+      if (!response.ok) throw new Error('Failed to delete server');
       fetchServers();
     } catch (err) {
       setError(err.message);

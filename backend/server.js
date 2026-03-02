@@ -1432,68 +1432,6 @@ async function startServer() {
       }
     });
 
-    // Remove a server from managed list - protected (admin only)
-    app.delete('/api/servers/:id', verifyToken, async (req, res) => {
-      try {
-        // Check if user is admin
-        if (req.user.role !== 'admin') {
-          return res.status(403).json({ error: 'Only admins can remove servers' });
-        }
-
-        const serverId = req.params.id;
-
-        // Get server info first
-        const serverResult = await pool.query(
-          'SELECT vmid, server_name FROM managed_servers WHERE id = $1',
-          [serverId]
-        );
-
-        if (serverResult.rows.length === 0) {
-          return res.status(404).json({ error: 'Server not found' });
-        }
-
-        const { vmid, server_name } = serverResult.rows[0];
-
-        // Delete from managed servers
-        await pool.query(
-          'DELETE FROM managed_servers WHERE id = $1',
-          [serverId]
-        );
-
-        // Remove from Velocity server list if configured
-        const velocity = await getVelocityClient();
-        if (velocity.isConfigured() && server_name) {
-          const velocityResult = await velocity.removeServer(server_name);
-          if (!velocityResult.success) {
-            console.warn(`⚠️  Could not remove ${server_name} from Velocity: ${velocityResult.message}`);
-          } else {
-            console.log(`✓ Removed ${server_name} from Velocity`);
-          }
-        }
-
-        // Remove DNS record if configured
-        try {
-          const dns = await getDNSClient();
-          if (dns.isConfigured() && server_name) {
-            const dnsResult = await dns.removeARecord(server_name);
-            if (!dnsResult.success) {
-              console.warn(`⚠️  Could not remove DNS record for ${server_name}: ${dnsResult.message}`);
-            } else {
-              console.log(`✓ Removed DNS record for ${server_name}`);
-            }
-          }
-        } catch (dnsError) {
-          console.warn(`⚠️  Error removing DNS record: ${dnsError.message}`);
-        }
-
-        console.log(`✓ Removed server ${vmid} (${server_name}) from managed list`);
-        res.json({ message: 'Server removed from managed list' });
-      } catch (error) {
-        console.error('❌ Error removing server:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
     // Get server details (protected)
     app.get('/api/servers/:vmid', verifyToken, async (req, res) => {
       try {

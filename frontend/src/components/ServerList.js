@@ -105,10 +105,10 @@ function ServerList({
                   {isAdmin && (
                     <button
                       className="btn btn-delete"
-                      onClick={() => onDelete(server.id)}
-                      title="Remove from managed list"
+                      onClick={() => onDelete(server.vmid)}
+                      title="Delete VM and all configurations"
                     >
-                      🗑️ Remove
+                      🗑️ Delete
                     </button>
                   )}
                 </div>
