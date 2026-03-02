@@ -1152,6 +1152,67 @@ async function startServer() {
       }
     });
 
+    // Get all available storages and current configuration
+    app.get('/api/admin/config/storages', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const cloneProxmox = await getProxmoxClient();
+        const allStorages = await cloneProxmox.getStorage();
+        
+        // Get configured storages
+        let configuredStorages = await AppConfig.get('available_storages');
+        let enableFiltering = await AppConfig.get('enable_storage_filtering');
+        
+        let parsedConfigured = [];
+        if (configuredStorages) {
+          parsedConfigured = typeof configuredStorages === 'string' ? 
+            JSON.parse(configuredStorages) : configuredStorages;
+        }
+        
+        const storageList = allStorages.map(s => ({
+          name: s.storage,
+          type: s.type,
+          enabled: true,
+          configured: parsedConfigured.includes(s.storage),
+          availableGB: Math.round(Math.max(0, parseInt(s.avail || 0)) / (1024 * 1024 * 1024) * 100) / 100,
+          sizeGB: Math.round(Math.max(0, parseInt(s.size || s.total || 0)) / (1024 * 1024 * 1024) * 100) / 100
+        }));
+        
+        res.json({
+          allStorages: storageList,
+          configured: parsedConfigured,
+          filteringEnabled: enableFiltering === 'true'
+        });
+      } catch (error) {
+        console.error('Error fetching storages:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Configure available storages
+    app.post('/api/admin/config/storages', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { storages, enableFiltering } = req.body;
+        
+        if (!Array.isArray(storages)) {
+          return res.status(400).json({ error: 'storages must be an array' });
+        }
+        
+        // Store configured storages
+        await AppConfig.set('available_storages', storages, req.user.userId, 'List of available storage names for cloning', 'json');
+        await AppConfig.set('enable_storage_filtering', (enableFiltering === true).toString(), req.user.userId, 'Enable storage filtering for users');
+        
+        res.json({ 
+          success: true, 
+          message: 'Storage configuration updated',
+          configured: storages,
+          filteringEnabled: enableFiltering === true
+        });
+      } catch (error) {
+        console.error('Error updating storage config:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Test DNS connection
     app.post('/api/admin/config/test-dns', verifyToken, requireAdmin, async (req, res) => {
       try {
@@ -1527,7 +1588,19 @@ async function startServer() {
         const nodes = await cloneProxmox.getNodes();
         
         // Get storage
-        const storage = await cloneProxmox.getStorage();
+        const allStorage = await cloneProxmox.getStorage();
+        
+        // Get configured available storages from app config
+        let availableStorageNames = await AppConfig.get('available_storages');
+        const enableStorageFiltering = await AppConfig.get('enable_storage_filtering');
+        
+        // If filtering is enabled, only show configured storages; otherwise show all
+        let storage = allStorage;
+        if (enableStorageFiltering === 'true' && availableStorageNames) {
+          const storageList = typeof availableStorageNames === 'string' ? 
+            JSON.parse(availableStorageNames) : availableStorageNames;
+          storage = allStorage.filter(s => storageList.includes(s.storage));
+        }
 
         const result = { 
           nodes: nodes
@@ -1535,16 +1608,19 @@ async function startServer() {
             .sort((a, b) => a.name.localeCompare(b.name)),
           storage: storage
             .map(s => {
-              const available = s.avail || s.available || 0;
-              const used = s.used || 0;
-              const total = s.size || s.maxfiles || (available + used) || 1;
+              const available = parseInt(s.avail || s.available || 0);
+              const used = parseInt(s.used || 0);
+              const total = parseInt(s.size || s.total || s.maxfiles || (available + used) || 0);
               return {
                 id: s.storage, 
                 name: s.storage,
                 type: s.type,
-                available: Math.max(0, available), // Ensure non-negative
-                used: Math.max(0, used),
-                size: Math.max(0, total)
+                availableBytes: Math.max(0, available),
+                availableGB: Math.round(Math.max(0, available) / (1024 * 1024 * 1024) * 100) / 100,
+                usedBytes: Math.max(0, used),
+                usedGB: Math.round(Math.max(0, used) / (1024 * 1024 * 1024) * 100) / 100,
+                sizeBytes: Math.max(0, total),
+                sizeGB: Math.round(Math.max(0, total) / (1024 * 1024 * 1024) * 100) / 100
               };
             })
             .sort((a, b) => a.name.localeCompare(b.name))
@@ -1552,8 +1628,7 @@ async function startServer() {
         
         console.log(`✅ Sending ${result.storage.length} storage options to client`);
         result.storage.forEach(st => {
-          const gb = Math.round(st.available / (1024 * 1024 * 1024));
-          console.log(`   ${st.name} (${st.type}): ${gb} GB available`);
+          console.log(`   ${st.name} (${st.type}): ${st.availableGB} GB available, ${st.sizeGB} GB total`);
         });
         
         res.json(result);

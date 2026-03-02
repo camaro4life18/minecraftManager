@@ -81,22 +81,25 @@ class ProxmoxClient {
       
       console.log(`📦 All storage retrieved: ${storages.length} total`);
       const detailedStorage = filtered.map(s => {
-        const used = s.used || 0;
-        const avail = s.avail || 0;
-        const total = s.maxfiles || s.size || (used + avail);
+        const used = parseInt(s.used || 0);
+        const avail = parseInt(s.avail || 0);
+        const total = parseInt(s.size || s.maxfiles || (used + avail) || 0);
         return {
+          storage: s.storage,
           name: s.storage,
           used,
           avail,
+          size: total,
           total,
           type: s.type,
-          content: s.content
+          content: s.content,
+          enabled: s.enabled
         };
       });
       
       console.log('📦 Filtered storage details:', JSON.stringify(detailedStorage, null, 2));
       
-      return filtered;
+      return detailedStorage;
     } catch (error) {
       throw new Error(`Failed to fetch storage: ${error.message}`);
     }
