@@ -50,6 +50,10 @@ function AdminSettings({ apiBase, token, isAdmin }) {
   const [settingUpDns, setSettingUpDns] = useState(false);
   const [dnsSSHStatus, setDnsSSHStatus] = useState(null);
   const [proxmoxNodes, setProxmoxNodes] = useState([]);
+  const [storageOptions, setStorageOptions] = useState([]);
+  const [selectedStorages, setSelectedStorages] = useState([]);
+  const [storageFilteringEnabled, setStorageFilteringEnabled] = useState(false);
+  const [loadingStorages, setLoadingStorages] = useState(false);
   const [showPasswords, setShowPasswords] = useState({
     proxmoxPassword: false,
     velocityPassword: false,
@@ -65,11 +69,14 @@ function AdminSettings({ apiBase, token, isAdmin }) {
   useEffect(() => {
     if (activeTab === 'velocity') {
       loadVelocitySSHStatus();
-    }    if (activeTab === 'dns') {
+    }
+    if (activeTab === 'dns') {
       loadDnsSSHStatus();
-    }  }, [activeTab])
-
-;
+    }
+    if (activeTab === 'storage') {
+      loadStorageConfiguration();
+    }
+  }, [activeTab]);
 
   const loadVelocitySSHStatus = async () => {
     try {
@@ -164,6 +171,76 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     } catch (err) {
       console.error('Error loading configuration:', err);
       setError('Failed to load configuration');
+    }
+  };
+
+  const loadStorageConfiguration = async () => {
+    try {
+      setLoadingStorages(true);
+      setError(null);
+
+      const response = await fetch(`${apiBase}/api/admin/config/storages`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to load storage configuration');
+      }
+
+      const data = await response.json();
+      const storages = Array.isArray(data.allStorages) ? data.allStorages : [];
+      const configured = Array.isArray(data.configured) ? data.configured : [];
+
+      setStorageOptions(storages);
+      setSelectedStorages(configured);
+      setStorageFilteringEnabled(Boolean(data.filteringEnabled));
+    } catch (err) {
+      console.error('Error loading storage configuration:', err);
+      setError(err.message || 'Failed to load storage configuration');
+    } finally {
+      setLoadingStorages(false);
+    }
+  };
+
+  const handleStorageToggle = (storageName) => {
+    setSelectedStorages(prev => (
+      prev.includes(storageName)
+        ? prev.filter(name => name !== storageName)
+        : [...prev, storageName]
+    ));
+  };
+
+  const saveStorageConfig = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+
+      const response = await fetch(`${apiBase}/api/admin/config/storages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          storages: selectedStorages,
+          enableFiltering: storageFilteringEnabled
+        })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to save storage configuration');
+      }
+
+      setSuccess('✓ Storage configuration saved successfully');
+      setTimeout(() => setSuccess(null), 5000);
+      await loadStorageConfiguration();
+    } catch (err) {
+      setError(err.message || 'Failed to save storage configuration');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -739,6 +816,12 @@ function AdminSettings({ apiBase, token, isAdmin }) {
           onClick={() => setActiveTab('router')}
         >
           Router Configuration
+        </button>
+        <button
+          className={`tab-button ${activeTab === 'storage' ? 'active' : ''}`}
+          onClick={() => setActiveTab('storage')}
+        >
+          Storage Configuration
         </button>
       </div>
 
@@ -1324,6 +1407,79 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                   disabled={loading || !router.host || !router.username || !router.password}
                 >
                   {loading ? 'Saving...' : '💾 Save Router Config'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {activeTab === 'storage' && (
+          <div className="settings-section">
+            <h3>Storage Configuration</h3>
+            <p className="section-description">
+              Select which Proxmox storages users can choose from during cloning.
+            </p>
+
+            <form className="settings-form">
+              <div className="form-group">
+                <label htmlFor="storage-filtering-enabled">Enable Storage Filtering:</label>
+                <input
+                  type="checkbox"
+                  id="storage-filtering-enabled"
+                  checked={storageFilteringEnabled}
+                  onChange={(e) => setStorageFilteringEnabled(e.target.checked)}
+                  disabled={loading || loadingStorages}
+                />
+                <small>
+                  When enabled, clone form only shows checked storages below. When disabled, all storages are shown.
+                </small>
+              </div>
+
+              <div className="form-group">
+                <label>Available Storages:</label>
+                {loadingStorages ? (
+                  <div>Loading storage list...</div>
+                ) : storageOptions.length === 0 ? (
+                  <div>No storages found. Check Proxmox configuration and connection.</div>
+                ) : (
+                  <div>
+                    {storageOptions.map((storage) => {
+                      const checked = selectedStorages.includes(storage.name);
+                      return (
+                        <div key={storage.name} style={{ marginBottom: '8px' }}>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => handleStorageToggle(storage.name)}
+                              disabled={loading || loadingStorages}
+                              style={{ marginRight: '8px' }}
+                            />
+                            {storage.name} ({storage.type}) - {storage.availableGB} GB available / {storage.sizeGB} GB total
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="btn-test"
+                  onClick={loadStorageConfiguration}
+                  disabled={loading || loadingStorages}
+                >
+                  {loadingStorages ? 'Refreshing...' : '🔄 Refresh Storage List'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={saveStorageConfig}
+                  disabled={loading || loadingStorages}
+                >
+                  {loading ? 'Saving...' : '💾 Save Storage Config'}
                 </button>
               </div>
             </form>
