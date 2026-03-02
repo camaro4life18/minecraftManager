@@ -2114,7 +2114,7 @@ async function startServer() {
         // Copy SSH configuration from source to destination
         // This allows us to immediately configure the world without manual SSH setup
         const sshConfigCopied = await ManagedServer.copySSHConfig(
-          sourceVmId: parsedSourceVmId,
+          parsedSourceVmId,
           assignedVmId,
           null,
           targetIp
