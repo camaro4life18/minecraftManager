@@ -1442,18 +1442,18 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                 ) : storageOptions.length === 0 ? (
                   <div>No storages found. Check Proxmox configuration and connection.</div>
                 ) : (
-                  <div>
+                  <div className="storage-options-list">
                     {storageOptions.map((storage) => {
                       const checked = selectedStorages.includes(storage.name);
                       return (
-                        <div key={storage.name} style={{ marginBottom: '8px' }}>
-                          <label>
+                        <div key={storage.name} className="storage-option-row">
+                          <label className="storage-option-label">
                             <input
                               type="checkbox"
                               checked={checked}
                               onChange={() => handleStorageToggle(storage.name)}
                               disabled={loading || loadingStorages}
-                              style={{ marginRight: '8px' }}
+                              className="storage-option-checkbox"
                             />
                             {storage.name} ({storage.type}) - {storage.availableGB} GB available / {storage.sizeGB} GB total
                           </label>
