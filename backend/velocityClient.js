@@ -58,23 +58,25 @@ class VelocityClient extends RemoteServiceClient {
         console.log(`✓ Added new Velocity entry: ${minecraftServerName}`);
       }
 
+      // Add forced-hosts mapping so minecraft04.zanarkand.site routes to minecraft04
+      // Check if forced-hosts mapping exists
+      const forcedHostCheck = await ssh.executeCommand(`grep -q '"${minecraftServerName}.zanarkand.site"' ${this.velocityConfigPath} && echo "EXISTS" || echo "NOT_EXISTS"`);
+      const forcedHostExists = forcedHostCheck.stdout.trim() === 'EXISTS';
+
+      if (!forcedHostExists) {
+        console.log(`🎯 Adding forced-hosts mapping for ${minecraftServerName}.zanarkand.site...`);
+        const forcedHostCmd = `sudo sed -i '/^\\[forced-hosts\\]/a "${minecraftServerName}.zanarkand.site" = "${minecraftServerName}"' ${this.velocityConfigPath}`;
+        await ssh.executeCommand(forcedHostCmd);
+        console.log(`✓ Added forced-hosts mapping: ${minecraftServerName}.zanarkand.site -> ${minecraftServerName}`);
+      }
+
       // Reload Velocity proxy by restarting the service
       console.log('🔄 Reloading Velocity proxy...');
       const restartResult = await ssh.executeCommand(`sudo systemctl restart ${this.velocityServiceName}`);
       
       if (restartResult.code === 0) {
         console.log('✓ Velocity proxy reloaded successfully');
-        
-        // Update default route to point to the new server
-        console.log(`🎯 Setting ${minecraftServerName} as default route...`);
-        const defaultRouteCmd = `sudo sed -i 's|"zanarkand.site" = ".*"|"zanarkand.site" = "${minecraftServerName}"|' ${this.velocityConfigPath}`;
-        await ssh.executeCommand(defaultRouteCmd);
-        console.log(`✓ Default route updated to ${minecraftServerName}`);
-        
-        // Reload again to apply default route change
-        await ssh.executeCommand(`sudo systemctl restart ${this.velocityServiceName}`);
-        
-        return { success: true, message: 'Server added and set as default' };
+        return { success: true, message: 'Server added with forced-hosts mapping' };
       } else {
         console.warn('⚠️  Velocity restart returned non-zero code, but server was added to config');
         return { success: true, message: 'Server added to config, restart may need verification' };
@@ -110,6 +112,11 @@ class VelocityClient extends RemoteServiceClient {
       // Remove server entry using sed
       const removeCmd = `sudo sed -i '/^${minecraftServerName} =/d' ${this.velocityConfigPath}`;
       await ssh.executeCommand(removeCmd);
+
+      // Remove forced-hosts mapping
+      console.log(`🗑️  Removing forced-hosts mapping for ${minecraftServerName}.zanarkand.site...`);
+      const removeForcedHostCmd = `sudo sed -i '/"${minecraftServerName}.zanarkand.site"/d' ${this.velocityConfigPath}`;
+      await ssh.executeCommand(removeForcedHostCmd);
 
       // Reload Velocity
       console.log('🔄 Reloading Velocity proxy...');
