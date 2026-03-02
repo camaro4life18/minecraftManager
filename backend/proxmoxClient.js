@@ -72,18 +72,16 @@ class ProxmoxClient {
     try {
       const response = await this.api.get('/storage');
       const storages = response.data.data || [];
-      
-      // Filter for storage that supports disk images  
-      // Note: enabled field may be undefined, so we don't check it
-      const filtered = storages.filter(s => 
+
+      const filtered = storages.filter(s =>
         (s.content || '').includes('images')
       );
-      
+
       console.log(`📦 All storage retrieved: ${storages.length} total`);
-      const detailedStorage = filtered.map(s => {
+      let detailedStorage = filtered.map(s => {
         const used = parseInt(s.used || 0);
         const avail = parseInt(s.avail || 0);
-        const total = parseInt(s.size || s.maxfiles || (used + avail) || 0);
+        const total = parseInt(s.total || s.size || s.maxfiles || (used + avail) || 0);
         return {
           storage: s.storage,
           name: s.storage,
@@ -93,12 +91,62 @@ class ProxmoxClient {
           total,
           type: s.type,
           content: s.content,
-          enabled: s.enabled
+          enabled: s.enabled,
+          source: 'cluster'
         };
       });
-      
+
+      const hasNonZeroClusterStats = detailedStorage.some(s => (s.avail || 0) > 0 || (s.size || 0) > 0 || (s.used || 0) > 0);
+
+      if (!hasNonZeroClusterStats && detailedStorage.length > 0) {
+        console.warn('⚠️ Cluster /storage returned zero stats for all storages; attempting node-level storage fallback');
+
+        const nodes = await this.getNodes();
+        const mergedByStorage = new Map();
+
+        for (const node of nodes) {
+          try {
+            const nodeStorage = await this.getNodeStorage(node.node);
+            for (const s of nodeStorage) {
+              const used = parseInt(s.used || 0);
+              const avail = parseInt(s.avail || 0);
+              const total = parseInt(s.total || s.size || s.maxfiles || (used + avail) || 0);
+              const key = s.storage;
+              const existing = mergedByStorage.get(key);
+
+              const currentScore = (avail || 0) + (total || 0) + (used || 0);
+              const existingScore = existing ? ((existing.avail || 0) + (existing.size || 0) + (existing.used || 0)) : -1;
+
+              if (!existing || currentScore > existingScore) {
+                mergedByStorage.set(key, {
+                  storage: s.storage,
+                  name: s.storage,
+                  used,
+                  avail,
+                  size: total,
+                  total,
+                  type: s.type,
+                  content: s.content,
+                  enabled: s.enabled,
+                  source: `node:${node.node}`
+                });
+              }
+            }
+          } catch (nodeError) {
+            console.warn(`⚠️ Failed node storage lookup for ${node.node}: ${nodeError.message}`);
+          }
+        }
+
+        if (mergedByStorage.size > 0) {
+          detailedStorage = Array.from(mergedByStorage.values());
+          console.log(`✅ Node-level storage fallback applied for ${detailedStorage.length} storages`);
+        } else {
+          console.warn('⚠️ Node-level storage fallback returned no storage data; keeping cluster values');
+        }
+      }
+
       console.log('📦 Filtered storage details:', JSON.stringify(detailedStorage, null, 2));
-      
+
       return detailedStorage;
     } catch (error) {
       throw new Error(`Failed to fetch storage: ${error.message}`);
