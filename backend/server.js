@@ -654,6 +654,11 @@ async function startServer() {
           if (dns.sshKeyPath) await AppConfig.set('dns_ssh_key', dns.sshKeyPath, req.user.userId, 'DNS SSH private key path');
           if (dns.zone) await AppConfig.set('dns_zone', dns.zone, req.user.userId, 'DNS zone name');
           if (dns.zoneFile) await AppConfig.set('dns_zone_file', dns.zoneFile, req.user.userId, 'DNS zone file path');
+          
+          // Secondary DNS support
+          if (dns.secondaryHost) await AppConfig.set('dns_secondary_host', dns.secondaryHost, req.user.userId, 'Secondary DNS server hostname or IP');
+          if (dns.secondarySshPort) await AppConfig.set('dns_secondary_ssh_port', dns.secondarySshPort.toString(), req.user.userId, 'Secondary DNS SSH port');
+          if (dns.secondarySshUser) await AppConfig.set('dns_secondary_ssh_user', dns.secondarySshUser, req.user.userId, 'Secondary DNS SSH username');
         }
 
         if (router) {
@@ -1032,6 +1037,65 @@ async function startServer() {
           res.json({ 
             success: false, 
             error: `Failed to retrieve key: ${error.message}`
+          });
+        }
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Setup secondary DNS server SSH key and configuration
+    app.post('/api/admin/config/setup-secondary-dns', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { host, sshPort, sshUser, password, zone, zoneFile } = req.body;
+        
+        if (!host || !sshUser || !password) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Secondary DNS host, SSH user, and password are required' 
+          });
+        }
+
+        try {
+          console.log(`🔐 Setting up SSH key authentication for secondary DNS ${host}...`);
+          
+          const secondaryDns = new DNSClient({ 
+            host,
+            port: sshPort ? parseInt(sshPort) : 22,
+            username: sshUser,
+            password,
+            zone,
+            zoneFile
+          });
+
+          // Setup SSH key authentication
+          const setupResult = await secondaryDns.setupSSHKeyAuth();
+
+          if (setupResult?.privateKey) {
+            await AppConfig.set('dns_secondary_ssh_private_key', setupResult.privateKey);
+            console.log('✓ Secondary DNS private key stored in database during setup');
+          }
+
+          console.log('✓ Secondary DNS setup complete - SSH key authentication configured');
+          console.log('⚠️  NEXT STEP: Configure passwordless sudo on the secondary DNS server');
+          console.log(`ℹ️  SSH into ${host} and run (with your password when prompted):`);
+          console.log(`   echo '${sshUser} ALL=(ALL) NOPASSWD:/bin/cp,/bin/sed,/bin/tee,/usr/sbin/rndc,/bin/systemctl' | sudo tee /etc/sudoers.d/dns-ops`);
+          console.log(`   sudo chmod 440 /etc/sudoers.d/dns-ops`);
+
+          // Store configuration
+          if (host) await AppConfig.set('dns_secondary_host', host, req.user.userId, 'Secondary DNS server hostname or IP');
+          if (sshPort) await AppConfig.set('dns_secondary_ssh_port', sshPort.toString(), req.user.userId, 'Secondary DNS SSH port');
+          if (sshUser) await AppConfig.set('dns_secondary_ssh_user', sshUser, req.user.userId, 'Secondary DNS SSH username');
+
+          res.json({ 
+            success: true, 
+            message: 'Secondary DNS SSH key authentication configured. Please configure passwordless sudo on the secondary DNS server (see above for instructions).'
+          });
+        } catch (error) {
+          console.error('Secondary DNS SSH setup error:', error);
+          res.json({ 
+            success: false, 
+            error: error.message 
           });
         }
       } catch (error) {
@@ -2341,21 +2405,45 @@ async function startServer() {
         });
 
         try {
-          const dns = await getDNSClient();
-          if (dns.isConfigured() && assignedVmId) {
-            // DNS should point to the Velocity proxy, not the individual VM
-            const velocityHost = await AppConfig.get('velocity_host');
-            if (velocityHost) {
-              console.log(`📝 Adding DNS record: ${domainName} -> ${velocityHost}`);
+          const velocityHost = await AppConfig.get('velocity_host');
+          if (!velocityHost) {
+            console.warn('⚠️  Velocity host not configured, skipping DNS record');
+          } else {
+            // Update primary DNS server
+            const dns = await getDNSClient();
+            if (dns.isConfigured() && assignedVmId) {
+              console.log(`📝 Adding DNS record to primary: ${domainName} -> ${velocityHost}`);
               
               const dnsResult = await dns.addARecord(domainName, velocityHost);
               if (dnsResult.success) {
-                console.log(`✅ Added DNS record successfully`);
+                console.log(`✅ Added DNS record to primary successfully`);
               } else {
-                console.warn(`⚠️  Could not add DNS record, but VM clone succeeded: ${dnsResult.message}`);
+                console.warn(`⚠️  Could not add DNS record to primary, but VM clone succeeded: ${dnsResult.message}`);
               }
-            } else {
-              console.warn('⚠️  Velocity host not configured, skipping DNS record');
+            }
+            
+            // Update secondary DNS server if configured
+            const secondaryDnsHost = await AppConfig.get('dns_secondary_host');
+            if (secondaryDnsHost) {
+              console.log(`📝 Adding DNS record to secondary: ${domainName} -> ${velocityHost}`);
+              
+              const secondaryDns = new DNSClient({
+                host: secondaryDnsHost,
+                port: await AppConfig.get('dns_secondary_ssh_port'),
+                username: await AppConfig.get('dns_secondary_ssh_user'),
+                privateKey: await AppConfig.get('dns_secondary_ssh_private_key'),
+                zone: await AppConfig.get('dns_zone'),
+                zoneFile: await AppConfig.get('dns_zone_file')
+              });
+              
+              if (secondaryDns.isConfigured()) {
+                const secondaryResult = await secondaryDns.addARecord(domainName, velocityHost);
+                if (secondaryResult.success) {
+                  console.log(`✅ Added DNS record to secondary successfully`);
+                } else {
+                  console.warn(`⚠️  Could not add DNS record to secondary: ${secondaryResult.message}`);
+                }
+              }
             }
           }
         } catch (dnsError) {
@@ -2728,11 +2816,35 @@ async function startServer() {
         try {
           const dns = await getDNSClient();
           if (dns.isConfigured() && serverName) {
+            console.log(`🗑️  Removing DNS record from primary: ${serverName}`);
             const dnsResult = await dns.removeARecord(serverName);
             if (!dnsResult.success) {
-              console.warn(`⚠️  Could not remove DNS record: ${dnsResult.message}`);
+              console.warn(`⚠️  Could not remove DNS record from primary: ${dnsResult.message}`);
             } else {
-              console.log(`✓ Removed DNS record for ${serverName}`);
+              console.log(`✓ Removed DNS record from primary for ${serverName}`);
+            }
+          }
+          
+          // Remove from secondary DNS server if configured
+          const secondaryDnsHost = await AppConfig.get('dns_secondary_host');
+          if (secondaryDnsHost && serverName) {
+            console.log(`🗑️  Removing DNS record from secondary: ${serverName}`);
+            const secondaryDns = new DNSClient({
+              host: secondaryDnsHost,
+              port: await AppConfig.get('dns_secondary_ssh_port'),
+              username: await AppConfig.get('dns_secondary_ssh_user'),
+              privateKey: await AppConfig.get('dns_secondary_ssh_private_key'),
+              zone: await AppConfig.get('dns_zone'),
+              zoneFile: await AppConfig.get('dns_zone_file')
+            });
+            
+            if (secondaryDns.isConfigured()) {
+              const secondaryResult = await secondaryDns.removeARecord(serverName);
+              if (!secondaryResult.success) {
+                console.warn(`⚠️  Could not remove DNS record from secondary: ${secondaryResult.message}`);
+              } else {
+                console.log(`✓ Removed DNS record from secondary for ${serverName}`);
+              }
             }
           }
         } catch (dnsError) {
