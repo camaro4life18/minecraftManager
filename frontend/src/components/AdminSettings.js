@@ -64,6 +64,19 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     routerPassword: false
   });
   const [activeTab, setActiveTab] = useState('proxmox');
+  
+  // User management state
+  const [users, setUsers] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [showCreateUserForm, setShowCreateUserForm] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [newUser, setNewUser] = useState({
+    username: '',
+    email: '',
+    password: '',
+    role: 'user'
+  });
+  const [showNewUserPassword, setShowNewUserPassword] = useState(false);
 
   useEffect(() => {
     loadConfiguration();
@@ -78,6 +91,9 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     }
     if (activeTab === 'storage') {
       loadStorageConfiguration();
+    }
+    if (activeTab === 'users') {
+      loadUsers();
     }
   }, [activeTab]);
 
@@ -793,6 +809,170 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     }
   };
 
+  // User Management Functions
+  const loadUsers = async () => {
+    try {
+      setLoadingUsers(true);
+      setError(null);
+      const response = await fetch(`${apiBase}/api/users`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setUsers(data);
+      } else {
+        throw new Error('Failed to load users');
+      }
+    } catch (err) {
+      console.error('Error loading users:', err);
+      setError(err.message || 'Failed to load users');
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+
+      if (!newUser.username || !newUser.password) {
+        setError('Username and password are required');
+        return;
+      }
+
+      if (newUser.password.length < 6) {
+        setError('Password must be at least 6 characters');
+        return;
+      }
+
+      const response = await fetch(`${apiBase}/api/admin/users`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(newUser)
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to create user');
+      }
+
+      setSuccess('✓ User created successfully');
+      setTimeout(() => setSuccess(null), 5000);
+      setShowCreateUserForm(false);
+      setNewUser({ username: '', email: '', password: '', role: 'user' });
+      await loadUsers();
+    } catch (err) {
+      setError(err.message || 'Failed to create user');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateUser = async (userId) => {
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+
+      const response = await fetch(`${apiBase}/api/admin/users/${userId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          username: editingUser.username,
+          email: editingUser.email,
+          role: editingUser.role
+        })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to update user');
+      }
+
+      setSuccess('✓ User updated successfully');
+      setTimeout(() => setSuccess(null), 5000);
+      setEditingUser(null);
+      await loadUsers();
+    } catch (err) {
+      setError(err.message || 'Failed to update user');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (userId, newPassword) => {
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+
+      if (!newPassword || newPassword.length < 6) {
+        setError('Password must be at least 6 characters');
+        return;
+      }
+
+      const response = await fetch(`${apiBase}/api/admin/users/${userId}/password`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ password: newPassword })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to reset password');
+      }
+
+      setSuccess('✓ Password reset successfully');
+      setTimeout(() => setSuccess(null), 5000);
+    } catch (err) {
+      setError(err.message || 'Failed to reset password');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteUser = async (userId, username) => {
+    if (!window.confirm(`Are you sure you want to delete user "${username}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+
+      const response = await fetch(`${apiBase}/api/users/${userId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to delete user');
+      }
+
+      setSuccess('✓ User deleted successfully');
+      setTimeout(() => setSuccess(null), 5000);
+      await loadUsers();
+    } catch (err) {
+      setError(err.message || 'Failed to delete user');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (!isAdmin) {
     return (
       <div className="admin-settings">
@@ -840,6 +1020,12 @@ function AdminSettings({ apiBase, token, isAdmin }) {
           onClick={() => setActiveTab('storage')}
         >
           Server Configuration
+        </button>
+        <button
+          className={`tab-button ${activeTab === 'users' ? 'active' : ''}`}
+          onClick={() => setActiveTab('users')}
+        >
+          User Management
         </button>
       </div>
 
@@ -1538,6 +1724,240 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                 </button>
               </div>
             </form>
+          </div>
+        )}
+
+        {activeTab === 'users' && (
+          <div className="settings-section">
+            <h3>User Management</h3>
+            <p className="section-description">
+              Create and manage user accounts for the Minecraft Server Manager.
+            </p>
+
+            <div className="users-section">
+              <div className="form-actions" style={{ marginBottom: '20px' }}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => setShowCreateUserForm(!showCreateUserForm)}
+                  disabled={loading}
+                >
+                  {showCreateUserForm ? '✕ Cancel' : '➕ Create New User'}
+                </button>
+              </div>
+
+              {showCreateUserForm && (
+                <form className="settings-form" onSubmit={handleCreateUser} style={{ marginBottom: '30px', border: '1px solid #ddd', padding: '20px', borderRadius: '8px' }}>
+                  <h4>Create New User</h4>
+                  <div className="form-group">
+                    <label htmlFor="new-username">Username: *</label>
+                    <input
+                      type="text"
+                      id="new-username"
+                      value={newUser.username}
+                      onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
+                      placeholder="Enter username"
+                      required
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="new-email">Email:</label>
+                    <input
+                      type="email"
+                      id="new-email"
+                      value={newUser.email}
+                      onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                      placeholder="user@example.com (optional)"
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="new-password">
+                      Password: *
+                      <button
+                        type="button"
+                        className="show-password-btn"
+                        onClick={() => setShowNewUserPassword(!showNewUserPassword)}
+                      >
+                        {showNewUserPassword ? '🙈' : '👁️'}
+                      </button>
+                    </label>
+                    <input
+                      type={showNewUserPassword ? 'text' : 'password'}
+                      id="new-password"
+                      value={newUser.password}
+                      onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                      placeholder="Minimum 6 characters"
+                      required
+                      minLength={6}
+                      disabled={loading}
+                    />
+                    <small>Password must be at least 6 characters long</small>
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="new-role">Role:</label>
+                    <select
+                      id="new-role"
+                      value={newUser.role}
+                      onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
+                      disabled={loading}
+                    >
+                      <option value="user">User</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                    <small>Admins have full access to all settings and can manage users</small>
+                  </div>
+
+                  <div className="form-actions">
+                    <button
+                      type="submit"
+                      className="btn-primary"
+                      disabled={loading || !newUser.username || !newUser.password}
+                    >
+                      {loading ? 'Creating...' : '✓ Create User'}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {loadingUsers ? (
+                <div style={{ textAlign: 'center', padding: '20px' }}>Loading users...</div>
+              ) : users.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
+                  No users found. Click "Create New User" to add one.
+                </div>
+              ) : (
+                <div className="users-list">
+                  <table className="users-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '2px solid #ddd' }}>
+                        <th style={{ padding: '12px', textAlign: 'left' }}>Username</th>
+                        <th style={{ padding: '12px', textAlign: 'left' }}>Email</th>
+                        <th style={{ padding: '12px', textAlign: 'left' }}>Role</th>
+                        <th style={{ padding: '12px', textAlign: 'left' }}>Created</th>
+                        <th style={{ padding: '12px', textAlign: 'left' }}>Last Login</th>
+                        <th style={{ padding: '12px', textAlign: 'center' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.map((user) => (
+                        <tr key={user.id} style={{ borderBottom: '1px solid #eee' }}>
+                          {editingUser?.id === user.id ? (
+                            <>
+                              <td style={{ padding: '12px' }}>
+                                <input
+                                  type="text"
+                                  value={editingUser.username}
+                                  onChange={(e) => setEditingUser({ ...editingUser, username: e.target.value })}
+                                  style={{ width: '100%', padding: '4px' }}
+                                />
+                              </td>
+                              <td style={{ padding: '12px' }}>
+                                <input
+                                  type="email"
+                                  value={editingUser.email || ''}
+                                  onChange={(e) => setEditingUser({ ...editingUser, email: e.target.value })}
+                                  style={{ width: '100%', padding: '4px' }}
+                                />
+                              </td>
+                              <td style={{ padding: '12px' }}>
+                                <select
+                                  value={editingUser.role}
+                                  onChange={(e) => setEditingUser({ ...editingUser, role: e.target.value })}
+                                  style={{ width: '100%', padding: '4px' }}
+                                >
+                                  <option value="user">User</option>
+                                  <option value="admin">Admin</option>
+                                </select>
+                              </td>
+                              <td style={{ padding: '12px' }}>
+                                {new Date(user.created_at).toLocaleDateString()}
+                              </td>
+                              <td style={{ padding: '12px' }}>
+                                {user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}
+                              </td>
+                              <td style={{ padding: '12px', textAlign: 'center' }}>
+                                <button
+                                  onClick={() => handleUpdateUser(user.id)}
+                                  disabled={loading}
+                                  style={{ marginRight: '8px', padding: '4px 8px', cursor: 'pointer' }}
+                                >
+                                  ✓ Save
+                                </button>
+                                <button
+                                  onClick={() => setEditingUser(null)}
+                                  disabled={loading}
+                                  style={{ padding: '4px 8px', cursor: 'pointer' }}
+                                >
+                                  ✕ Cancel
+                                </button>
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td style={{ padding: '12px' }}>{user.username}</td>
+                              <td style={{ padding: '12px' }}>{user.email || '-'}</td>
+                              <td style={{ padding: '12px' }}>
+                                <span style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '4px',
+                                  backgroundColor: user.role === 'admin' ? '#3b82f6' : '#6b7280',
+                                  color: 'white',
+                                  fontSize: '12px'
+                                }}>
+                                  {user.role}
+                                </span>
+                              </td>
+                              <td style={{ padding: '12px' }}>
+                                {new Date(user.created_at).toLocaleDateString()}
+                              </td>
+                              <td style={{ padding: '12px' }}>
+                                {user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}
+                              </td>
+                              <td style={{ padding: '12px', textAlign: 'center' }}>
+                                <button
+                                  onClick={() => setEditingUser({ ...user })}
+                                  disabled={loading}
+                                  title="Edit user"
+                                  style={{ marginRight: '8px', padding: '4px 8px', cursor: 'pointer' }}
+                                >
+                                  ✏️ Edit
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    const newPassword = prompt(`Enter new password for ${user.username} (min 6 characters):`);
+                                    if (newPassword) {
+                                      handleResetPassword(user.id, newPassword);
+                                    }
+                                  }}
+                                  disabled={loading}
+                                  title="Reset password"
+                                  style={{ marginRight: '8px', padding: '4px 8px', cursor: 'pointer' }}
+                                >
+                                  🔑 Reset Password
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteUser(user.id, user.username)}
+                                  disabled={loading}
+                                  title="Delete user"
+                                  style={{ padding: '4px 8px', cursor: 'pointer', color: '#dc2626' }}
+                                >
+                                  🗑️ Delete
+                                </button>
+                              </td>
+                            </>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

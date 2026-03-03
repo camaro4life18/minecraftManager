@@ -464,6 +464,159 @@ async function startServer() {
       }
     });
 
+    // Create new user (admin only)
+    app.post('/api/admin/users', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { username, email, password, role } = req.body;
+
+        // Validate inputs
+        if (!username || !password) {
+          return res.status(400).json({ error: 'Username and password are required' });
+        }
+
+        if (role && !['admin', 'user'].includes(role)) {
+          return res.status(400).json({ error: 'Invalid role' });
+        }
+
+        // Check if username already exists
+        const existingUser = await User.findByUsername(username);
+        if (existingUser) {
+          return res.status(409).json({ error: 'Username already exists' });
+        }
+
+        // Check if email already exists (if provided)
+        if (email) {
+          const existingEmail = await User.findByEmail(email);
+          if (existingEmail) {
+            return res.status(409).json({ error: 'Email already exists' });
+          }
+        }
+
+        // Hash password
+        const passwordHash = await bcrypt.hash(password, 10);
+
+        // Create user
+        const userId = await User.create(username, email, passwordHash, role || 'user');
+
+        // Return created user (without password hash)
+        const user = await User.findById(userId);
+        res.status(201).json({
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          created_at: user.created_at
+        });
+      } catch (error) {
+        console.error('Error creating user:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Update user password (admin only)
+    app.put('/api/admin/users/:userId/password', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { password } = req.body;
+        const userId = parseInt(req.params.userId);
+
+        if (!password) {
+          return res.status(400).json({ error: 'Password is required' });
+        }
+
+        if (password.length < 6) {
+          return res.status(400).json({ error: 'Password must be at least 6 characters' });
+        }
+
+        // Hash new password
+        const passwordHash = await bcrypt.hash(password, 10);
+
+        // Update password
+        await pool.query(
+          'UPDATE users SET password_hash = $1 WHERE id = $2',
+          [passwordHash, userId]
+        );
+
+        // Revoke all sessions for this user to force re-login
+        await Session.revokeAllForUser(userId);
+
+        res.json({ success: true, message: 'Password updated successfully' });
+      } catch (error) {
+        console.error('Error updating password:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Update user details (admin only)
+    app.put('/api/admin/users/:userId', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { username, email, role } = req.body;
+        const userId = parseInt(req.params.userId);
+
+        // Validate role if provided
+        if (role && !['admin', 'user'].includes(role)) {
+          return res.status(400).json({ error: 'Invalid role' });
+        }
+
+        // Check if username already exists (if changed)
+        if (username) {
+          const existingUser = await User.findByUsername(username);
+          if (existingUser && existingUser.id !== userId) {
+            return res.status(409).json({ error: 'Username already exists' });
+          }
+        }
+
+        // Check if email already exists (if changed)
+        if (email) {
+          const existingEmail = await User.findByEmail(email);
+          if (existingEmail && existingEmail.id !== userId) {
+            return res.status(409).json({ error: 'Email already exists' });
+          }
+        }
+
+        // Build update query dynamically
+        const updates = [];
+        const values = [];
+        let paramIndex = 1;
+
+        if (username) {
+          updates.push(`username = $${paramIndex++}`);
+          values.push(username);
+        }
+        if (email !== undefined) {
+          updates.push(`email = $${paramIndex++}`);
+          values.push(email);
+        }
+        if (role) {
+          updates.push(`role = $${paramIndex++}`);
+          values.push(role);
+        }
+
+        if (updates.length === 0) {
+          return res.status(400).json({ error: 'No fields to update' });
+        }
+
+        values.push(userId);
+        await pool.query(
+          `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
+          values
+        );
+
+        // Return updated user
+        const user = await User.findById(userId);
+        res.json({
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          created_at: user.created_at,
+          last_login: user.last_login
+        });
+      } catch (error) {
+        console.error('Error updating user:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // ============================================
     // SESSION MANAGEMENT ROUTES (Admin only)
     // ============================================
