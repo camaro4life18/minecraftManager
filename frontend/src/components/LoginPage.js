@@ -78,12 +78,6 @@ function LoginPage() {
             </a>
           </div>
         </form>
-
-        <div className="login-info">
-          <p><strong>Demo Accounts:</strong></p>
-          <p>👨 Admin: <code>admin</code> / <code>admin123</code></p>
-          <p>👦 User: <code>user</code> / <code>user123</code></p>
-        </div>
       </div>
     </div>
   );
