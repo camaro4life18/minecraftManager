@@ -27,7 +27,10 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     password: '',
     sshKeyPath: '/root/.ssh/id_rsa_dns',
     zone: 'zanarkand.site',
-    zoneFile: '/var/lib/bind/zanarkand.site.hosts'
+    zoneFile: '/var/lib/bind/zanarkand.site.hosts',
+    secondaryHost: '',
+    secondarySshPort: 22,
+    secondarySshUser: 'user'
   });
 
   const [router, setRouter] = useState({
@@ -49,6 +52,9 @@ function AdminSettings({ apiBase, token, isAdmin }) {
   const [testingDns, setTestingDns] = useState(false);
   const [settingUpDns, setSettingUpDns] = useState(false);
   const [dnsSSHStatus, setDnsSSHStatus] = useState(null);
+  const [testingSecondaryDns, setTestingSecondaryDns] = useState(false);
+  const [settingUpSecondaryDns, setSettingUpSecondaryDns] = useState(false);
+  const [secondaryDnsSSHStatus, setSecondaryDnsSSHStatus] = useState(null);
   const [proxmoxNodes, setProxmoxNodes] = useState([]);
   const [storageOptions, setStorageOptions] = useState([]);
   const [selectedStorages, setSelectedStorages] = useState([]);
@@ -88,6 +94,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     }
     if (activeTab === 'dns') {
       loadDnsSSHStatus();
+      loadSecondaryDnsSSHStatus();
     }
     if (activeTab === 'storage') {
       loadStorageConfiguration();
@@ -173,7 +180,10 @@ function AdminSettings({ apiBase, token, isAdmin }) {
           sshUser: config.dns_ssh_user?.value || 'joseph',
           sshKeyPath: config.dns_ssh_key?.value || '/root/.ssh/id_rsa_dns',
           zone: config.dns_zone?.value || 'zanarkand.site',
-          zoneFile: config.dns_zone_file?.value || '/var/lib/bind/zanarkand.site.hosts'
+          zoneFile: config.dns_zone_file?.value || '/var/lib/bind/zanarkand.site.hosts',
+          secondaryHost: config.dns_secondary_host?.value || '',
+          secondarySshPort: parseInt(config.dns_secondary_ssh_port?.value || 22),
+          secondarySshUser: config.dns_secondary_ssh_user?.value || 'joseph'
         }));
       }
 
@@ -298,7 +308,7 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     const { name, value } = e.target;
     setDns(prev => ({
       ...prev,
-      [name]: name === 'sshPort' ? parseInt(value) : value
+      [name]: (name === 'sshPort' || name === 'secondarySshPort') ? parseInt(value) : value
     }));
   };
 
@@ -596,6 +606,143 @@ function AdminSettings({ apiBase, token, isAdmin }) {
     }
   };
 
+  const loadSecondaryDnsSSHStatus = async () => {
+    try {
+      const response = await fetch(`${apiBase}/api/admin/config/secondary-dns-ssh-status`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const status = await response.json();
+        setSecondaryDnsSSHStatus(status);
+      }
+    } catch (err) {
+      console.error('Error loading Secondary DNS SSH status:', err);
+    }
+  };
+
+  const testSecondaryDnsPassword = async () => {
+    try {
+      setTestingSecondaryDns(true);
+      setError(null);
+
+      if (!dns.secondaryHost || !dns.password) {
+        setError('Secondary DNS host and password are required');
+        setTestingSecondaryDns(false);
+        return;
+      }
+
+      const response = await fetch(`${apiBase}/api/admin/config/test-secondary-dns-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          host: dns.secondaryHost,
+          sshPort: dns.secondarySshPort,
+          sshUser: dns.secondarySshUser,
+          password: dns.password
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setSuccess('✓ Secondary DNS password authentication successful');
+      } else {
+        setError(`✗ Password test failed: ${result.error}`);
+      }
+    } catch (err) {
+      setError(`Test error: ${err.message}`);
+    } finally {
+      setTestingSecondaryDns(false);
+    }
+  };
+
+  const setupSecondaryDnsSSH = async () => {
+    try {
+      setSettingUpSecondaryDns(true);
+      setError(null);
+      setSuccess(null);
+
+      if (!dns.secondaryHost || !dns.password) {
+        setError('Secondary DNS host and password are required');
+        setSettingUpSecondaryDns(false);
+        return;
+      }
+
+      console.log('Setting up SSH authentication for Secondary DNS...');
+
+      const response = await fetch(`${apiBase}/api/admin/config/setup-secondary-dns`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          host: dns.secondaryHost,
+          sshPort: dns.secondarySshPort,
+          sshUser: dns.secondarySshUser,
+          password: dns.password,
+          zone: dns.zone,
+          zoneFile: dns.zoneFile
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setSuccess(`✓ ${result.message}`);
+        // Clear password after successful setup
+        setDns(prev => ({ ...prev, password: '' }));
+        // Reload SSH status
+        await loadSecondaryDnsSSHStatus();
+        // Now save the configuration
+        await saveDnsConfig();
+      } else {
+        setError(`✗ Setup failed: ${result.error}`);
+      }
+    } catch (err) {
+      setError(`Setup error: ${err.message}`);
+    } finally {
+      setSettingUpSecondaryDns(false);
+    }
+  };
+
+  const testSecondaryDnsConnection = async () => {
+    try {
+      setTestingSecondaryDns(true);
+      setError(null);
+
+      const response = await fetch(`${apiBase}/api/admin/config/test-secondary-dns`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          host: dns.secondaryHost,
+          sshPort: dns.secondarySshPort,
+          sshUser: dns.secondarySshUser,
+          zone: dns.zone,
+          zoneFile: dns.zoneFile
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setSuccess('✓ Secondary DNS connection successful');
+      } else {
+        setError(`✗ Connection failed: ${result.error}`);
+      }
+    } catch (err) {
+      setError(`Connection error: ${err.message}`);
+    } finally {
+      setTestingSecondaryDns(false);
+    }
+  };
+
   const testRouterConnection = async () => {
     try {
       setTestingRouter(true);
@@ -748,7 +895,10 @@ function AdminSettings({ apiBase, token, isAdmin }) {
             sshUser: dns.sshUser,
             sshKeyPath: dns.sshKeyPath,
             zone: dns.zone,
-            zoneFile: dns.zoneFile
+            zoneFile: dns.zoneFile,
+            secondaryHost: dns.secondaryHost,
+            secondarySshPort: dns.secondarySshPort,
+            secondarySshUser: dns.secondarySshUser
           }
         })
       });
@@ -1467,9 +1617,98 @@ function AdminSettings({ apiBase, token, isAdmin }) {
                 <small>Path to zone file on the DNS server</small>
               </div>
 
+              <hr style={{margin: '20px 0', border: 'none', borderTop: '1px solid #ddd'}} />
+              <h4 style={{marginBottom: '15px', color: '#666'}}>Secondary DNS Server (Optional)</h4>
+              <p className="section-description" style={{marginBottom: '15px'}}>
+                Configure a secondary DNS server for redundancy. Records will be added to both servers.
+              </p>
+
+              <div className="form-group">
+                <label htmlFor="dns-secondary-host">Secondary DNS Host/IP:</label>
+                <input
+                  type="text"
+                  id="dns-secondary-host"
+                  name="secondaryHost"
+                  value={dns.secondaryHost}
+                  onChange={handleDnsChange}
+                  placeholder="e.g., dns2.example.com or 192.168.1.241"
+                  disabled={loading}
+                />
+                <small>Hostname or IP of secondary DNS server (leave blank to disable)</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="dns-secondary-ssh-port">Secondary SSH Port:</label>
+                <input
+                  type="number"
+                  id="dns-secondary-ssh-port"
+                  name="secondarySshPort"
+                  value={dns.secondarySshPort}
+                  onChange={handleDnsChange}
+                  placeholder="22"
+                  disabled={loading}
+                />
+                <small>SSH port for secondary DNS server (default: 22)</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="dns-secondary-ssh-user">Secondary SSH Username:</label>
+                <input
+                  type="text"
+                  id="dns-secondary-ssh-user"
+                  name="secondarySshUser"
+                  value={dns.secondarySshUser}
+                  onChange={handleDnsChange}
+                  placeholder="joseph"
+                  disabled={loading}
+                />
+                <small>SSH username for secondary DNS server</small>
+              </div>
+
+              {secondaryDnsSSHStatus && secondaryDnsSSHStatus.configured && (
+                <div className="config-status">
+                  <strong>Secondary DNS SSH Status:</strong> {secondaryDnsSSHStatus.hasSSHKey ? '✓ Key configured' : '⚠️ Key not found'}
+                </div>
+              )}
+
+              {dns.secondaryHost && (
+                <div className="form-actions" style={{marginBottom: '20px'}}>
+                  {!secondaryDnsSSHStatus?.hasSSHKey && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-test"
+                        onClick={testSecondaryDnsPassword}
+                        disabled={loading || testingSecondaryDns || !dns.secondaryHost || !dns.password}
+                      >
+                        {testingSecondaryDns ? 'Testing...' : '🔐 Test Secondary Password'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={setupSecondaryDnsSSH}
+                        disabled={loading || settingUpSecondaryDns || testingSecondaryDns || !dns.secondaryHost || !dns.password}
+                      >
+                        {settingUpSecondaryDns ? 'Setting up...' : '🔑 Setup Secondary SSH'}
+                      </button>
+                    </>
+                  )}
+                  {secondaryDnsSSHStatus?.hasSSHKey && (
+                    <button
+                      type="button"
+                      className="btn-test"
+                      onClick={testSecondaryDnsConnection}
+                      disabled={loading || testingSecondaryDns || !dns.secondaryHost}
+                    >
+                      {testingSecondaryDns ? 'Testing...' : '🔗 Test Secondary DNS'}
+                    </button>
+                  )}
+                </div>
+              )}
+
               {dnsSSHStatus && (
                 <div className="config-status">
-                  <strong>SSH Status:</strong> {dnsSSHStatus.hasSSHKey ? '✓ Key configured' : '⚠️ Key not found'}
+                  <strong>Primary DNS SSH Status:</strong> {dnsSSHStatus.hasSSHKey ? '✓ Key configured' : '⚠️ Key not found'}
                 </div>
               )}
 

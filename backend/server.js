@@ -1471,6 +1471,124 @@ async function startServer() {
       }
     });
 
+    // Check SSH key status for Secondary DNS
+    app.get('/api/admin/config/secondary-dns-ssh-status', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const host = await AppConfig.get('dns_secondary_host');
+        if (!host) {
+          return res.json({ 
+            configured: false, 
+            hasSSHKey: false,
+            message: 'Secondary DNS not configured'
+          });
+        }
+
+        const sshUser = await AppConfig.get('dns_secondary_ssh_user');
+        const privateKey = await AppConfig.get('dns_secondary_ssh_private_key');
+
+        res.json({ 
+          configured: true,
+          hasSSHKey: !!privateKey,
+          host,
+          sshUser: sshUser,
+          message: privateKey ? '✓ SSH key is stored in database' : '⚠️ SSH key not yet stored'
+        });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Test Secondary DNS password (SSH connection with password)
+    app.post('/api/admin/config/test-secondary-dns-password', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { host, sshPort, sshUser, password } = req.body;
+
+        if (!host || !sshUser || !password) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Host, SSH user, and password are required' 
+          });
+        }
+
+        try {
+          console.log(`🧪 Testing secondary DNS password connection to ${host}...`);
+          
+          const testDns = new DNSClient({ 
+            host,
+            port: sshPort || 22,
+            username: sshUser,
+            password: password
+          });
+
+          // Try a simple command to verify password works
+          const ssh = testDns._getSSHClient();
+          const result = await ssh.executeCommand('echo "Connection successful"');
+          
+          if (result.code === 0) {
+            res.json({ 
+              success: true, 
+              message: 'Password authentication successful' 
+            });
+          } else {
+            res.json({ 
+              success: false, 
+              error: 'Authentication failed' 
+            });
+          }
+        } catch (error) {
+          res.json({ 
+            success: false, 
+            error: error.message 
+          });
+        }
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Test Secondary DNS connection (with SSH key)
+    app.post('/api/admin/config/test-secondary-dns', verifyToken, requireAdmin, async (req, res) => {
+      try {
+        const { host, sshPort, sshUser, zone, zoneFile } = req.body;
+
+        if (!host) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Secondary DNS host is required' 
+          });
+        }
+
+        try {
+          const privateKey = await AppConfig.get('dns_secondary_ssh_private_key');
+          
+          const dns = new DNSClient({ 
+            host, 
+            port: sshPort || 22,
+            username: sshUser,
+            privateKey: privateKey,
+            zone: zone,
+            zoneFile: zoneFile
+          });
+          
+          // Try to list records to test connection
+          const records = await dns.listARecords();
+          
+          res.json({ 
+            success: true, 
+            message: `Secondary DNS connection successful. Found ${records.length} A record(s).`,
+            records
+          });
+        } catch (error) {
+          res.json({ 
+            success: false, 
+            error: error.message 
+          });
+        }
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     // Test ASUS Router connection
     app.post('/api/admin/config/test-router', verifyToken, requireAdmin, async (req, res) => {
       try {
