@@ -29,6 +29,9 @@ def _extract_staticlist(data: Any) -> str:
     1. Direct dict with "dhcp_staticlist" key
     2. Nested under "nvram_get"
     3. Other key variations
+    
+    CRITICAL: If extraction fails or returns empty, this could lead to data loss
+    if the caller doesn't verify the result!
     """
     result = ""
     
@@ -37,6 +40,8 @@ def _extract_staticlist(data: Any) -> str:
         if "dhcp_staticlist" in data:
             result = data.get("dhcp_staticlist") or ""
             print(f"[DHCP] _extract_staticlist: Found at top level (length: {len(result)})")
+            if not result:
+                print(f"[DHCP] _extract_staticlist: ⚠️  Value is empty/null at top level")
             return result
             
         # Try nested under nvram_get
@@ -45,6 +50,8 @@ def _extract_staticlist(data: Any) -> str:
             if nested and "dhcp_staticlist" in nested:
                 result = nested.get("dhcp_staticlist") or ""
                 print(f"[DHCP] _extract_staticlist: Found in nvram_get (length: {len(result)})")
+                if not result:
+                    print(f"[DHCP] _extract_staticlist: ⚠️  Value is empty/null in nvram_get")
                 return result
         
         # Try any key containing dhcp_staticlist
@@ -52,11 +59,15 @@ def _extract_staticlist(data: Any) -> str:
             if "dhcp_staticlist" in str(key).lower():
                 result = value or ""
                 print(f"[DHCP] _extract_staticlist: Found in key '{key}' (length: {len(result)})")
+                if not result:
+                    print(f"[DHCP] _extract_staticlist: ⚠️  Value is empty/null in '{key}'")
                 return result
     
     # Warn if data not found - this is critical!
     data_keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
-    print(f"[DHCP] _extract_staticlist: WARNING - dhcp_staticlist NOT FOUND. Data structure: {data_keys}")
+    print(f"[DHCP] _extract_staticlist: ❌ CRITICAL - dhcp_staticlist NOT FOUND in response!")
+    print(f"[DHCP] _extract_staticlist: Response structure: {data_keys}")
+    print(f"[DHCP] _extract_staticlist: This WILL cause data loss if caller doesn't verify result!")
     print(f"[DHCP] _extract_staticlist: Full response: {data}")
     
     return ""
@@ -282,6 +293,16 @@ async def _add_reservation(
         raw = _extract_staticlist(data)
         print(f"[DHCP] _update: Step 2 - Extracted staticlist: {len(raw)} bytes")
         
+        # SAFETY CHECK: Verify data looks valid before saving
+        # If raw is empty, this might be a parsing error - log the raw data for debugging
+        if len(raw) == 0:
+            print(f"[DHCP] _update: ⚠️  WARNING - Extracted EMPTY dhcp_staticlist from router!")
+            print(f"[DHCP] _update: Raw response data structure: {data}")
+            print(f"[DHCP] _update: This could indicate:")
+            print(f"[DHCP] _update:   1. No existing reservations on router (OK if first time)")
+            print(f"[DHCP] _update:   2. API response format changed (contact developer if problem persists)")
+            print(f"[DHCP] _update:   3. Extraction parsing logic needs updating")
+        
         mac_normalized = mac.upper()
         
         # Check if this MAC already exists in the raw string (simple substring check)
@@ -318,6 +339,15 @@ async def _add_reservation(
         
         if not raw:
             raise ValueError("[DHCP] _update: Final staticlist is empty - refusing to write!")
+        
+        # SAFETY CHECK: Verify the final staticlist contains our new entry
+        # to ensure we didn't accidentally send incomplete data
+        entry_to_send = f"{mac_normalized}:{ip}:{name}"
+        if entry_to_send not in raw:
+            print(f"[DHCP] _update: ERROR - Final staticlist doesn't contain new entry!")
+            print(f"[DHCP] _update: Expected to find: {entry_to_send}")
+            print(f"[DHCP] _update: In: {raw}")
+            raise ValueError(f"[DHCP] _update: Attempted to save DHCP staticlist but new entry missing! Aborting to prevent data loss.")
         
         # Prepare command to send raw string back
         commands = {
