@@ -1969,7 +1969,7 @@ async function startServer() {
           return res.status(403).json({ error: 'You do not have permission to clone servers' });
         }
 
-        const { sourceVmId, newVmId, domainName, seed, targetNode, targetStorage, clientRequestId } = req.body;
+        const { sourceVmId, newVmId, domainName, seed, targetNode, targetStorage, targetIp, clientRequestId } = req.body;
         const configuredBaseVmId = await AppConfig.get('clone_base_server_vmid');
         const effectiveSourceVmId = sourceVmId || configuredBaseVmId;
         
@@ -2244,12 +2244,12 @@ async function startServer() {
           await CloneStatus.updateStep(assignedVmId, 'dhcp_reservation');
           
           if (!assignedVmId) {
-            await CloneStatus.markPaused(assignedVmId, 'Could not determine assigned VM ID', 'dhcp_reservation');
-            return res.status(500).json({
-              error: 'Could not determine assigned VM ID for DHCP reservation.',
-              vmid: assignedVmId,
-              canRetry: true
-            });
+            console.warn('⚠️  Could not determine assigned VM ID for DHCP reservation. Skipping DHCP step.');
+            dhcpReservationResult = {
+              success: false,
+              skipped: true,
+              reason: 'missing-vmid'
+            };
           }
 
           if (!dhcpEnabled) {
@@ -2320,32 +2320,30 @@ async function startServer() {
                 console.log(`✅ DHCP reservation created: ${macAddress} → ${vmIp} (locked from DHCP)`);
                 await CloneStatus.completeStep(assignedVmId, 'dhcp_reserved', { ipAddress: vmIp, macAddress });
               } else {
-                await CloneStatus.markPaused(assignedVmId, 'Failed to create DHCP reservation', 'dhcp_reservation');
-                return res.status(500).json({
-                  error: 'Failed to create DHCP reservation on router.',
-                  vmid: assignedVmId,
-                  canRetry: true
-                });
+                console.warn(`⚠️  Failed to create DHCP reservation for VM ${assignedVmId}. Continuing clone workflow.`);
+                dhcpReservationResult = {
+                  success: false,
+                  skipped: true,
+                  reason: 'router-reservation-failed'
+                };
               }
             } else {
               const missing = !macAddress ? 'MAC address' : 'IP address';
-              await CloneStatus.markPaused(assignedVmId, `Could not get ${missing} after ${maxRetries} attempts`, 'dhcp_reservation');
-              return res.status(500).json({
-                error: `Could not get ${missing} for VM ${assignedVmId} after ${maxRetries * 2} seconds. Check that guest agent is installed on template.`,
-                vmId: assignedVmId,
-                vmid: assignedVmId,
-                canRetry: true
-              });
+              console.warn(`⚠️  Could not get ${missing} for VM ${assignedVmId} after ${maxRetries * 2} seconds. Continuing clone workflow and will retry IP detection after boot.`);
+              dhcpReservationResult = {
+                success: false,
+                skipped: true,
+                reason: `missing-${missing.toLowerCase().replace(' ', '-')}`
+              };
             }
           }
         } catch (routerError) {
           console.error(`⚠️  Failed to create DHCP reservation:`, routerError.message);
-          await CloneStatus.markPaused(assignedVmId, routerError.message, 'dhcp_reservation');
-          return res.status(500).json({
-            error: `Failed to create DHCP reservation: ${routerError.message}`,
-            vmid: assignedVmId,
-            canRetry: true
-          });
+          dhcpReservationResult = {
+            success: false,
+            skipped: true,
+            reason: `dhcp-error:${routerError.message}`
+          };
         }
 
         // Start the newly cloned VM
